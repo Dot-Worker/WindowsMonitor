@@ -7,10 +7,44 @@ from unittest.mock import patch
 from browser_inventory import browser_inventory, browser_policies
 from inventory import Inventory, TASK_CACHE_TREE
 from monitor import database, update_scope
-from protections import browser_changes, defense_events, defense_state, defender_exclusions, DEFENDER, recovery_tasks, shadow_changes, task_cache_audit
+from protections import browser_changes, defense_events, defense_state, defender_exclusions, DEFENDER, recovery_tasks, shadow_changes, task_cache_audit, wmi_subscriptions
 
 
 class ProtectionTests(unittest.TestCase):
+    def test_wmi_bindings_link_exact_local_conditions_and_actions(self):
+        def ref(cls, name, namespace="root/subscription"):
+            return {"CimSystemProperties": {"ClassName": cls, "Namespace": namespace},
+                    "CimInstanceProperties": [{"Name": "Name", "Value": name}]}
+        inv = Inventory()
+        inv.add(r"__EventFilter\AtTime", {"Query": "fixture clock condition", "EventNamespace": "root/cimv2"})
+        inv.add(r"CommandLineEventConsumer\Runner", {"CommandLineTemplate": "fixture.exe"})
+        inv.add(r"CommandLineEventConsumer\Orphan", {"CommandLineTemplate": "never linked"})
+        inv.add(r"ActiveScriptEventConsumer\Script", {"ScriptingEngine": "VBScript", "ScriptText": "private fixture body"})
+        inv.add(r"__FilterToConsumerBinding\one", {"Filter": ref("__EventFilter", "ATTIME"), "Consumer": ref("CommandLineEventConsumer", "runner")})
+        inv.add(r"__FilterToConsumerBinding\two", {"Filter": ref("__EventFilter", "unavailable"), "Consumer": ref("ActiveScriptEventConsumer", "Script")})
+        inv.add(r"__FilterToConsumerBinding\log", {"Consumer": ref("NTEventLogEventConsumer", "logger")})
+        inv.add(r"__FilterToConsumerBinding\external", {"Consumer": ref("CommandLineEventConsumer", "Runner", "remote/namespace")})
+        result = wmi_subscriptions(inv, {})
+        self.assertEqual(4, result["bindings"])
+        self.assertEqual({"NTEventLogEventConsumer": 1}, result["otherConsumerTypes"])
+        self.assertEqual(1, len(result["unresolved"]))
+        a, b = result["execution"]
+        self.assertEqual("fixture clock condition", a["trigger"]["Query"])
+        self.assertEqual("fixture.exe", a["action"]["CommandLineTemplate"])
+        self.assertTrue(b["gaps"])
+        self.assertEqual(64, len(b["action"]["scriptTextSha256"]))
+        self.assertNotIn("private fixture body", json.dumps(result))
+        self.assertNotIn("never linked", json.dumps(result))
+
+    def test_wmi_registration_is_not_execution(self):
+        channel = "Microsoft-Windows-Sysmon/Operational"
+        raw = '<Event><EventData><Data Name="Operation">Created</Data><Data Name="Name">demo</Data></EventData></Event>'
+        e = {"provider": "Microsoft-Windows-Sysmon", "id": 21, "time": "t", "record": 2, "xml": raw}
+        result = wmi_subscriptions(Inventory(), {channel: {"events": [e, dict(e, provider="unrelated"), dict(e, id=8)]}})
+        self.assertEqual([], result["execution"])
+        self.assertEqual(1, len(result["registrationEvents"]))
+        self.assertEqual("Created", result["registrationEvents"][0]["fields"]["Operation"])
+
     def test_exclusion_scope_and_visibility_loss(self):
         db = database(":memory:")
         self.addCleanup(db.close)

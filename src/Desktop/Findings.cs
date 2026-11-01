@@ -71,6 +71,13 @@ namespace WindowsMonitor {
             foreach (var t in Rows(Child(sec,"taskCache"),"findings"))
                 all.Add(new Finding(Object.Equals(Get(t,"highPriority"),true) ? Grade.High : Grade.Review,
                     "任务缓存", Text(t,"task"), Text(t,"descriptor")+" · "+Text(t,"apiVisibility"), t));
+            foreach (var w in Rows(Child(sec,"wmiSubscriptions"),"execution"))
+                all.Add(new Finding(Grade.Review, "WMI 订阅", Text(w,"consumer"),
+                    "WMI 已登记触发条件与可执行消费者的绑定，执行情况需另行核对。", w));
+            foreach (var w in Rows(Child(sec,"wmiSubscriptions"),"unresolved"))
+                all.Add(new Finding(Grade.Gap, "WMI 引用", Text(w,"key"), Text(w,"reason"), w));
+            foreach (var w in Rows(Child(sec,"wmiSubscriptions"),"registrationEvents"))
+                all.Add(new Finding(Grade.Info, "WMI 登记", Text(w,"title"), "Sysmon "+Text(w,"id")+" · "+Text(w,"time"), w));
             foreach (var v in Rows(sec,"shadowChanges"))
                 all.Add(new Finding(Object.Equals(Get(v,"review"),true) ? Grade.Review : Grade.Info,
                     "卷影恢复", Text(v,"key"), Text(v,"title"), v));

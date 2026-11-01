@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from inventory import Inventory, collect_settings, covered, file_tree, machine, services, shortcut_findings
-from protections import browser_changes, defense_events, defense_state, defender_exclusions, recovery_tasks, shadow_changes, task_cache_audit
+from protections import browser_changes, defense_events, defense_state, defender_exclusions, recovery_tasks, shadow_changes, task_cache_audit, wmi_subscriptions
 
 
 FROZEN = getattr(sys, "frozen", False)
@@ -320,6 +320,10 @@ def report_html(report):
         cards("登记了强制安装的浏览器扩展", [(p["browser"] + " · " + p["id"], p)
                                       for p in security.get("browserPolicies", [])]) if security else "",
         cards("可能影响系统恢复的计划任务", [(e["task"], e) for e in security["recoveryTasks"]]) if security else "",
+        cards("WMI 条件触发的命令或脚本", [(v["consumer"], v) for v in security.get("wmiSubscriptions", {}).get("execution", [])]) if security else "",
+        cards("WMI 订阅引用读取缺口", [(v["key"], v) for v in security.get("wmiSubscriptions", {}).get("unresolved", [])]) if security else "",
+        cards("Sysmon 记录的 WMI 登记活动", [(v["title"] + " · " + v["time"], v)
+                                        for v in security.get("wmiSubscriptions", {}).get("registrationEvents", [])]) if security else "",
         (f"<p>计划任务缓存根键{'可读' if audit['rootObserved'] else '未观察到'} · 可核对缓存任务 {audit['checked']} 个 · "
          f"任务计划 API 本轮列出 {audit['apiCount']} 个</p>" +
          cards("缺少安全描述符的任务缓存", [(t["task"], t) for t in audit["findings"]])) if audit else "",
@@ -409,6 +413,7 @@ def scan(args, job):
                                           "browserChanges": browser_changes(changes), "recoveryTasks": recovery_tasks(collection["tasks"]),
                                           "shadowChanges": shadow_changes(changes),
                                           "taskCache": task_cache_audit(collection["settings/HKLM"], collection["tasks"], changes),
+                                          "wmiSubscriptions": wmi_subscriptions(collection["wmi"], event_logs),
                                           "browserPolicies": [{"key": key, **value} for key, value in collection["browser-policy"].rows.values()]}
                 # Journal differences and gaps. Current full inventory is in items.
                 journal = {k: v for k, v in report.items() if k != "services"}

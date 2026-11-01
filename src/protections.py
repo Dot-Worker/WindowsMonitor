@@ -1,5 +1,7 @@
 """Summarize observed settings, task actions and Windows Defender events."""
+import hashlib
 import ntpath
+import os
 import re
 from xml.etree import ElementTree as ET
 from inventory import TASK_CACHE_TREE, covered
@@ -71,6 +73,76 @@ def task_cache_audit(registry, tasks, changes):
     return result
 
 
+def wmi_reference(value):
+    """Read typed local CIM references. Do not resolve arbitrary object paths."""
+    if not isinstance(value, dict):
+        return None
+    meta = value.get("CimSystemProperties")
+    props = value.get("CimInstanceProperties")
+    if not isinstance(meta, dict) or not isinstance(props, list):
+        return None
+    namespace = str(meta.get("Namespace") or "").replace("/", "\\").casefold()
+    server = str(meta.get("ServerName") or "").casefold()
+    if namespace != r"root\subscription" or server not in {"", ".", "localhost", os.environ.get("COMPUTERNAME", "").casefold()}:
+        return None
+    name = next((p.get("Value") for p in props
+                 if isinstance(p, dict) and str(p.get("Name")).casefold() == "name"), None)
+    cls = meta.get("ClassName")
+    return (cls, name) if isinstance(cls, str) and isinstance(name, str) and cls and name else None
+
+
+def wmi_subscriptions(inv, event_logs):
+    result = {"bindings": 0, "execution": [], "otherConsumerTypes": {}, "classGaps": inv.errors,
+              "unresolved": [], "registrationEvents": []}
+    for key, (label, binding) in inv.rows.items():
+        if not key.startswith("__filtertoconsumerbinding\\"):
+            continue
+        result["bindings"] += 1
+        consumer = wmi_reference(binding.get("Consumer"))
+        if not consumer:
+            result["unresolved"].append({"key": label, "reason": "不是可解析的本地 CIM 消费者引用"})
+            continue
+        cls, name = consumer
+        if cls.casefold() not in {"commandlineeventconsumer", "activescripteventconsumer"}:
+            others = result["otherConsumerTypes"]
+            others[cls] = others.get(cls, 0) + 1
+            continue
+        row = {"binding": label, "consumerType": cls, "consumer": name, "gaps": []}
+        action = cls + "\\" + name
+        target = inv.rows.get(action.casefold())
+        if target and covered(action, inv.errors):
+            props = target[1]
+            row["action"] = {k: props[k] for k in ("ExecutablePath", "CommandLineTemplate", "WorkingDirectory",
+                                                   "ScriptingEngine", "ScriptFileName") if props.get(k)}
+            if isinstance(props.get("ScriptText"), str) and props["ScriptText"]:
+                script = props["ScriptText"].encode("utf-8", "surrogatepass")
+                row["action"]["scriptTextSha256"] = hashlib.sha256(script).hexdigest()
+                row["action"]["scriptTextBytes"] = len(script)
+            if not row["action"]:
+                row["gaps"].append("本轮没有返回命令或脚本内容")
+        else:
+            row["gaps"].append("消费者对象未观测到或不可读")
+        trigger = wmi_reference(binding.get("Filter"))
+        if trigger and trigger[0].casefold() == "__eventfilter":
+            fkey = "\\".join(trigger)
+            row["filter"] = trigger[1]
+            filt = inv.rows.get(fkey.casefold())
+            if filt and covered(fkey, inv.errors):
+                row["trigger"] = {k: filt[1].get(k) for k in ("EventNamespace", "QueryLanguage", "Query")}
+            else:
+                row["gaps"].append("过滤器对象未观测到或不可读")
+        else:
+            row["gaps"].append("不是可解析的本地 CIM 过滤器引用")
+        result["execution"].append(row)
+    labels = {19: "WMI 过滤器登记活动", 20: "WMI 消费者登记活动", 21: "WMI 绑定登记活动"}
+    for e in event_logs.get("Microsoft-Windows-Sysmon/Operational", {}).get("events", []):
+        if e["id"] in labels and e["provider"] == "Microsoft-Windows-Sysmon":
+            fields = event_fields(e["xml"], {"operation", "name", "type", "eventnamespace", "query", "consumer", "filter"})
+            result["registrationEvents"].append({"title": labels[e["id"]], "id": e["id"], "record": e["record"],
+                                                "time": e["time"], "fields": fields})
+    return result
+
+
 def shadow_changes(changes):
     result = []
     for row in changes:
@@ -98,21 +170,22 @@ def shadow_changes(changes):
     return result
 
 
+def event_fields(raw, allowed):
+    try:
+        xml = ET.fromstring(raw)
+        return {d.get("Name"): d.text for d in xml.findall("./{*}EventData/{*}Data")
+                if d.get("Name", "").casefold() in allowed}
+    except ET.ParseError:
+        return {"readError": "事件 XML 无法解析"}
+
+
 def defense_events(event_logs):
     findings = []
     for event in event_logs.get(DEFENDER, {}).get("events", []):
         if event["id"] not in EVENTS or event["provider"] != "Microsoft-Windows-Windows Defender":
             continue
-        fields = {}
-        try:
-            xml = ET.fromstring(event["xml"])
-            for field in xml.findall("./{*}EventData/{*}Data"):
-                name = field.get("Name", "")
-                if name.casefold() in {"path", "process name", "threat name", "action name", "status description",
-                                       "detection id", "id", "target file name", "error description", "user"}:
-                    fields[name] = field.text
-        except ET.ParseError:
-            fields["readError"] = "事件 XML 无法解析"
+        fields = event_fields(event["xml"], {"path", "process name", "threat name", "action name", "status description",
+                                             "detection id", "id", "target file name", "error description", "user"})
         findings.append({"title": EVENTS[event["id"]], "time": event["time"], "id": event["id"],
                          "record": event["record"], "fields": fields})
     return findings
