@@ -1,8 +1,9 @@
 """Observe current-user Chromium profiles without loading extensions or browsing history."""
 import hashlib
 import json
+import ntpath
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import stat
 from urllib.parse import urlsplit
@@ -29,9 +30,7 @@ def file_bytes(path, limit):
     return data
 
 
-def extension(path):
-    manifest_bytes = file_bytes(path / "manifest.json", 2 << 20)
-    manifest = json.loads(manifest_bytes.decode("utf-8-sig"))
+def extension(path, manifest, manifest_bytes):
     files = {}
     remaining = 128 << 20
     todo = [path]
@@ -53,6 +52,90 @@ def extension(path):
         raise OSError("扩展清单在扫描期间发生变化")
     return {"version": manifest["version"], "permissions": manifest.get("permissions", []),
             "hostPermissions": manifest.get("host_permissions", []), "files": files}
+
+
+def declared_paths(manifest):
+    def array(obj, field):
+        values = obj.get(field, [])
+        if not isinstance(values, list):
+            raise ValueError("扩展清单的 " + field + " 不是数组")
+        return values
+
+    background = manifest.get("background", {})
+    paths = array(background, "scripts").copy()
+    for field in ("service_worker", "page"):
+        if field in background:
+            paths.append(background[field])
+    for content in array(manifest, "content_scripts"):
+        paths.extend(array(content, "js"))
+        paths.extend(array(content, "css"))
+    if not all(isinstance(s, str) for s in paths):
+        raise ValueError("扩展入口路径格式错误")
+    return list(dict.fromkeys(paths))
+
+
+def entry_path(raw):
+    relative = raw.removeprefix("/")
+    parts = relative.split("/")
+    if any(not part or part in (".", "..") or part.endswith((".", " "))
+           or re.search(r'[\\:<>"|?*\x00-\x1f]', part) or reserved_name(part) for part in parts):
+        raise ValueError("不是安全的扩展内相对路径")
+    return relative
+
+
+def reserved_name(name):
+    if hasattr(ntpath, "isreserved"):
+        return ntpath.isreserved(name)
+    return PureWindowsPath(name).is_reserved()
+
+
+def collect_extension(path, key, packages, entries):
+    raw = file_bytes(path / "manifest.json", 2 << 20)
+    manifest = json.loads(raw.decode("utf-8-sig"))
+    manifest_info = {"version": manifest["version"], "sha256": hashlib.sha256(raw).hexdigest(),
+                     "permissions": manifest.get("permissions", []), "hostPermissions": manifest.get("host_permissions", [])}
+    complete = None
+    try:
+        complete = extension(path, manifest, raw)
+    except (OSError, ValueError) as exc:
+        packages.fail(key, exc)
+    scripts = key + "\\scripts"
+    tmp = Inventory()
+    try:
+        paths = declared_paths(manifest)
+        if len(paths) > 128:
+            raise ValueError("超过 128 个声明入口")
+        remaining = 32 << 20
+        for name in paths:
+            item = scripts + "\\" + name
+            try:
+                rel = entry_path(name)
+                item = scripts + "\\" + rel
+                if complete is not None and rel in complete["files"]:
+                    checksum = complete["files"][rel]
+                else:
+                    file = path
+                    for part in rel.split("/")[:-1]:
+                        file = file / part
+                        local_stat(file)
+                    data = file_bytes(path / rel, min(8 << 20, remaining))
+                    remaining -= len(data)
+                    checksum = hashlib.sha256(data).hexdigest()
+                tmp.add(item, {"sha256": checksum, "present": True})
+            except FileNotFoundError:
+                tmp.add(item, {"present": False, "sha256": None})
+            except (OSError, ValueError) as exc:
+                tmp.fail(item, exc)
+    except (ValueError, TypeError, AttributeError) as exc:
+        tmp.fail(scripts, exc)
+    # Only publish evidence that still belongs to this manifest.
+    if file_bytes(path / "manifest.json", 2 << 20) != raw:
+        raise OSError("扩展清单在扫描期间发生变化")
+    if complete is not None:
+        packages.add(key, complete)
+    entries.add(key + "\\manifest", manifest_info)
+    entries.rows.update(tmp.rows)
+    entries.errors.update(tmp.errors)
 
 
 def redact_location(value):
@@ -85,7 +168,10 @@ def browser_inventory(roots=None):
     if roots is None:
         local = Path(os.environ["LOCALAPPDATA"])
         roots = {"Chrome": local / "Google/Chrome/User Data", "Edge": local / "Microsoft/Edge/User Data"}
-    ext, prefs = Inventory(), Inventory()
+    ext, prefs, entries = Inventory(), Inventory(), Inventory()
+    def unreadable(key, reason):
+        ext.fail(key, reason)
+        entries.fail(key, reason)
     errors = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError)
     for browser, root in roots.items():
         try:
@@ -94,13 +180,13 @@ def browser_inventory(roots=None):
         except FileNotFoundError:
             continue
         except OSError as exc:
-            ext.fail(browser, exc)
+            unreadable(browser, exc)
             prefs.fail(browser, exc)
             continue
         try:
             profiles = list(root.iterdir())
         except OSError as exc:
-            ext.fail(browser, exc)
+            unreadable(browser, exc)
             prefs.fail(browser, exc)
             continue
         for profile in profiles:
@@ -111,7 +197,7 @@ def browser_inventory(roots=None):
             try:
                 local_stat(profile)
             except OSError as exc:
-                ext.fail(key, exc)
+                unreadable(key, exc)
                 prefs.fail(key, exc)
                 continue
             for name in ("Preferences", "Secure Preferences"):
@@ -129,7 +215,7 @@ def browser_inventory(roots=None):
             except FileNotFoundError:
                 continue
             except OSError as exc:
-                ext.fail(key, exc)
+                unreadable(key, exc)
                 continue
             for directory in dirs:
                 if not re.fullmatch("[a-p]{32}", directory.name):
@@ -139,13 +225,13 @@ def browser_inventory(roots=None):
                     local_stat(directory)
                     versions = list(directory.iterdir())
                 except OSError as exc:
-                    ext.fail(ext_key, exc)
+                    unreadable(ext_key, exc)
                     continue
                 for version in versions:
                     item = ext_key + "\\" + version.name
                     try:
                         if stat.S_ISDIR(local_stat(version).st_mode):
-                            ext.add(item, extension(version))
+                            collect_extension(version, item, ext, entries)
                     except errors as exc:
-                        ext.fail(item, exc)
-    return {"browser-extensions": ext, "browser-preferences": prefs}
+                        unreadable(item, exc)
+    return {"browser-extensions": ext, "browser-preferences": prefs, "browser-entrypoints": entries}

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from browser_inventory import browser_inventory
 from inventory import Inventory
@@ -10,6 +11,50 @@ from protections import browser_changes, defense_events, defense_state, DEFENDER
 
 
 class ProtectionTests(unittest.TestCase):
+    def test_entrypoints_survive_package_limit_and_one_unreadable_script(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / "Default" / "Extensions" / ("b" * 32) / "1.0_0"
+            folder.mkdir(parents=True)
+            (folder / "manifest.json").write_text(json.dumps({"version": "1.0",
+                "background": {"service_worker": "/worker.js"},
+                "content_scripts": [{"js": ["large.js", "missing.js", "../escape.js"]}]}))
+            with (folder / "assets.bin").open("wb") as f:
+                f.truncate((128 << 20) + 1)
+            with (folder / "large.js").open("wb") as f:
+                f.truncate((8 << 20) + 1)
+            worker = folder / "worker.js"
+            worker.write_text("original")
+            db = database(":memory:")
+            self.addCleanup(db.close)
+            def scan():
+                inv = browser_inventory({"Edge": root})
+                entries = inv["browser-entrypoints"]
+                self.assertEqual(1, len(inv["browser-extensions"].errors))
+                self.assertEqual(2, len(entries.errors))
+                missing = next(v for k, (_, v) in entries.rows.items() if k.endswith("missing.js"))
+                self.assertFalse(missing["present"])
+                return browser_changes(update_scope(db, "browser-entrypoints", entries))
+            self.assertEqual([], scan())
+            worker.write_text("changed")
+            findings = scan()
+            self.assertEqual(1, len(findings))
+            self.assertTrue(findings[0]["key"].endswith("scripts\\worker.js"))
+            self.assertNotEqual(findings[0]["before"]["sha256"], findings[0]["after"]["sha256"])
+            self.assertEqual([], scan())
+
+    def test_manifest_paths_cannot_direct_reads_outside_extension(self):
+        import browser_inventory as browser
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "Default" / "Extensions" / ("a" * 32) / "1.0"
+            folder.mkdir(parents=True)
+            names = ["../escape", "//host/share", "C:/secret", "file:ads", "NUL", r"..\escape"]
+            (folder / "manifest.json").write_text(json.dumps({"version": "1", "background": {"scripts": names}}))
+            with patch.object(browser, "file_bytes", wraps=browser.file_bytes) as read:
+                data = browser_inventory({"Chrome": Path(tmp)})["browser-entrypoints"]
+            self.assertEqual(len(names), len(data.errors))
+            self.assertFalse(any(c.args[0].name not in ("manifest.json", "Preferences", "Secure Preferences") for c in read.call_args_list))
+
     def test_changed_script_under_same_version_and_unreadable_manifest(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

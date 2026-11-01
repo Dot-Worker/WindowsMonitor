@@ -59,12 +59,20 @@ def defense_events(event_logs):
 
 def browser_changes(changes):
     findings = []
+    packages = {row["key"].casefold() for row in changes if row["scope"] == "browser-extensions"}
     for row in changes:
-        if row["scope"] not in ("browser-extensions", "browser-preferences"):
+        if row["scope"] not in ("browser-extensions", "browser-preferences", "browser-entrypoints"):
             continue
         old, new = row.get("before", {}), row.get("after", {})
         item = {"key": row["key"], "kind": row["kind"]}
-        if row["scope"] == "browser-preferences":
+        if row["scope"] == "browser-entrypoints":
+            package = "\\".join(row["key"].split("\\", 4)[:4]).casefold()
+            if package in packages:
+                continue
+            item["title"] = "扩展清单或声明入口变化"
+            item["before"] = old
+            item["after"] = new
+        elif row["scope"] == "browser-preferences":
             item["title"] = "浏览器启动或扩展配置观测变化"
             item["fields"] = sorted(old.keys() | new.keys())
         elif "files" in old and "files" in new and "version" not in old.keys() | new.keys():

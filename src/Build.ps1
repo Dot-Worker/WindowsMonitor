@@ -38,8 +38,19 @@ try {
     $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     & $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Desktop\Verify.ps1') -Executable $exe -State (Join-Path $build 'desktop-smoke')
     if ($LASTEXITCODE -ne 0) { throw 'Packaged desktop verification failed' }
-    Copy-Item -LiteralPath $exe -Destination (Join-Path $dist 'WindowsMonitor.exe') -Force
-    Get-FileHash -LiteralPath (Join-Path $dist 'WindowsMonitor.exe') -Algorithm SHA256
+    $target = Join-Path $dist 'WindowsMonitor.exe'
+    $stage = Join-Path $dist ([Guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        [IO.File]::Copy($exe, $stage)
+        if ([IO.File]::Exists($target)) {
+            [IO.File]::Replace($stage, $target, [NullString]::Value)
+        } else {
+            [IO.File]::Move($stage, $target)
+        }
+    } finally {
+        if ([IO.File]::Exists($stage)) { [IO.File]::Delete($stage) }
+    }
+    Get-FileHash -LiteralPath $target -Algorithm SHA256
 } finally {
     $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
     $resolved = (Resolve-Path -LiteralPath $build).Path
