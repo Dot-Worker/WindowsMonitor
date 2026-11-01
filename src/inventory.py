@@ -357,6 +357,8 @@ def collect_settings(extra_registry, extra_dirs, cursors, extra_uefi):
         except OSError as exc:
             results.setdefault("services", Inventory()).fail("", exc)
         results.update(registry_sets(extra_registry))
+        from browser_inventory import browser_inventory
+        results.update(browser_inventory())
         from firmware import read_variables
         results["uefi"] = Inventory()
         read_variables(results["uefi"], extra_uefi)

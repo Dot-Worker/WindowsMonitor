@@ -12,6 +12,22 @@ import tempfile
 import time
 
 from inventory import Inventory, collect_settings, file_tree, machine, services, shortcut_findings
+from protections import browser_changes, defense_events, defense_state, recovery_tasks
+
+
+FROZEN = getattr(sys, "frozen", False)
+SOURCE_ROOT = Path(__file__).resolve().parent.parent
+VERSION_FILE = Path(__file__).with_name("VERSION") if FROZEN else SOURCE_ROOT / "VERSION"
+APP_VERSION = VERSION_FILE.read_text(encoding="ascii").strip()
+
+
+def default_state():
+    if not FROZEN:
+        return SOURCE_ROOT / ".windowsmonitor"
+    exe_dir = Path(sys.executable).resolve().parent
+    if exe_dir.name.casefold() == "dist" and (exe_dir.parent / "VERSION").is_file() and (exe_dir.parent / "src").is_dir():
+        return exe_dir.parent / ".windowsmonitor"
+    return Path(os.environ["LOCALAPPDATA"], "WindowsMonitor")
 
 
 def encode(value):
@@ -297,6 +313,7 @@ def report_html(report):
 
     ref = report["reference"]
     proc = report.get("processes", {})
+    security = report.get("security")
     return "".join([
         '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
         '<title>WindowsMonitor 本机报告</title><style>body{max-width:1050px;margin:2em auto;padding:0 1em;background:#f4f6f8;color:#182d40;'
@@ -305,6 +322,10 @@ def report_html(report):
         'pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.87em}</style>',
         f"<h1>WindowsMonitor 本机报告</h1><p>{esc(report['time'])} · {esc(report['job'])} · {esc(report['version']['CurrentBuild'])}.{esc(report['version']['UBR'])}</p>",
         f"<p>{esc(report['baselineNote'])}。{esc(ref['status'])}。</p>",
+        cards("Defender 当前配置", list(security["state"].items())) if security else "",
+        cards("阻止、审计与威胁处置事件", [(e["title"] + " · " + e["time"], e) for e in security["events"]]) if security else "",
+        cards("浏览器扩展与启动配置变化", [(e["title"] + " · " + e["key"], e) for e in security["browserChanges"]]) if security else "",
+        cards("含删除备份或关闭恢复命令的计划任务", [(e["task"], e) for e in security["recoveryTasks"]]) if security else "",
         (f"<p>{proc['hosts']} 个系统进程 · {proc['modules']} 条加载记录 · {proc['files']} 个磁盘映像。"
          "下列记录是待核对线索，JIT、热补丁和第三方扩展也会产生记录。</p>" if proc else ""),
         cards("系统进程内待核对的模块", [(x["class"] + " · " + x["path"], x) for x in proc.get("moduleFindings", [])]) if proc else "",
@@ -371,6 +392,7 @@ def scan(args, job):
                     else:
                         changes.extend(update_scope(db, scope, inv))
                 report = {
+                    "monitorVersion": APP_VERSION,
                     "time": now(), "started": started, "job": job, "version": version,
                     "previousTime": prev[0] if prev else None, "previousVersion": json.loads(prev[1]) if prev else None,
                     "baselineNote": "首次建立本机观测基线" if not prev else "对比各范围上次可读记录",
@@ -382,6 +404,9 @@ def scan(args, job):
                 }
                 if job == "processes":
                     report["processes"] = process_evidence(collection, ref)
+                if job == "settings":
+                    report["security"] = {"state": defense_state(collection["defender"]), "events": defense_events(event_logs),
+                                          "browserChanges": browser_changes(changes), "recoveryTasks": recovery_tasks(collection["tasks"])}
                 # Journal differences and gaps. Current full inventory is in items.
                 journal = {k: v for k, v in report.items() if k != "services"}
                 db.execute("INSERT INTO runs(job,stamp,version,report) VALUES(?,?,?,?)",
@@ -402,12 +427,12 @@ def interval(s):
 
 def main():
     p = argparse.ArgumentParser(description="WindowsMonitor 本机只读监控")
-    p.add_argument("--version", action="version", version="WindowsMonitor " + Path(__file__).with_name("VERSION").read_text().strip())
+    p.add_argument("--version", action="version", version="WindowsMonitor " + APP_VERSION)
     subs = p.add_subparsers(dest="command", required=True)
     for name in ("scan", "files", "processes", "watch", "reference", "history", "inventory"):
         c = subs.add_parser(name)
         if name != "reference":
-            c.add_argument("--state", type=Path, default=Path(__file__).resolve().parent / ".windowsmonitor")
+            c.add_argument("--state", type=Path, default=default_state())
         if name in ("files", "reference", "watch"):
             c.add_argument("--file-root", action="append", default=[], metavar="LABEL=PATH")
         if name in ("scan", "files", "processes", "watch"):
@@ -482,7 +507,8 @@ def watch(args):
         signal = args.state / "stop.request"
         signal.unlink(missing_ok=True)
         from ctypes import windll
-        atomic(token_info, encode({"pid": os.getpid(), "elevated": bool(windll.shell32.IsUserAnAdmin()), "started": now()}))
+        atomic(token_info, encode({"pid": os.getpid(), "elevated": bool(windll.shell32.IsUserAnAdmin()), "started": now(),
+                                  "monitorVersion": APP_VERSION}))
         atomic(pidfile, str(os.getpid()))
         def loop(job, delay):
             while not stop.is_set():

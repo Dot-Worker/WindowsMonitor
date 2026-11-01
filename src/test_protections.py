@@ -1,0 +1,75 @@
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+
+from browser_inventory import browser_inventory
+from inventory import Inventory
+from monitor import database, update_scope
+from protections import browser_changes, defense_events, defense_state, DEFENDER, recovery_tasks
+
+
+class ProtectionTests(unittest.TestCase):
+    def test_changed_script_under_same_version_and_unreadable_manifest(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "Default" / "Extensions" / ("b" * 32) / "1.0_0"
+            directory.mkdir(parents=True)
+            manifest = directory / "manifest.json"
+            manifest.write_text('{"version":"1.0","permissions":["storage"]}')
+            script = directory / "content.js"
+            script.write_text("original")
+            db = database(":memory:")
+            self.addCleanup(db.close)
+
+            def scan():
+                inv = browser_inventory({"Chrome": root})["browser-extensions"]
+                return inv, browser_changes(update_scope(db, "browser-extensions", inv))
+
+            self.assertEqual(scan()[1], [])
+            script.write_text("changed")
+            evidence = scan()[1]
+            self.assertEqual("扩展版本未变，文件内容有变化", evidence[0]["title"])
+            self.assertEqual(["content.js"], evidence[0]["files"])
+            manifest.write_text("{")
+            inv, findings = scan()
+            self.assertTrue(inv.errors)
+            self.assertEqual([], findings)
+            manifest.write_text('{"version":"1.1","permissions":["tabs"]}')
+            evidence = scan()[1]
+            self.assertEqual("扩展安装目录或清单变化", evidence[0]["title"])
+
+    def test_keeps_only_selected_preferences_and_redacts_url(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "Profile 2"
+            profile.mkdir()
+            (profile / "Preferences").write_text(json.dumps({"homepage": "https://user:secret@example.test/a?token=SECRET",
+                                                           "unrelated": "personal-data"}))
+            row = browser_inventory({"Edge": root})["browser-preferences"].rows
+            prefs = next(iter(row.values()))[1]
+            self.assertEqual("example.test", prefs["homepage"]["host"])
+            self.assertNotIn("secret", json.dumps(prefs).lower())
+            self.assertNotIn("personal-data", json.dumps(prefs))
+
+    def test_audit_block_tamper_and_provider_disambiguation(self):
+        xml = '<Event xmlns="urn:fixture"><EventData><Data Name="Process Name">example.exe</Data></EventData></Event>'
+        base = {"record": 50, "provider": "Microsoft-Windows-Windows Defender", "time": "now", "xml": xml}
+        events = [dict(base, id=i) for i in (1123, 1124, 5013, 1117)] + [dict(base, id=1123, provider="unrelated")]
+        findings = defense_events({DEFENDER: {"events": events}})
+        self.assertEqual(4, len(findings))
+        self.assertIn("已阻止", findings[0]["title"])
+        self.assertIn("仅审计", findings[1]["title"])
+        self.assertEqual("example.exe", findings[0]["fields"]["Process Name"])
+        self.assertIn("处置动作", findings[-1]["title"])
+        self.assertEqual("未知", defense_state(Inventory())["潜在不受欢迎应用防护"])
+
+    def test_recovery_task_distinguishes_inspection_from_deletion(self):
+        inv = Inventory()
+        for k, command, args in (("inspect", "vssadmin", "list shadows"), ("delete", "vssadmin.exe", "delete shadows /all"),
+                                 ("text", "notepad", "vssadmin.exe delete shadows"), ("bcd", "bcdedit.exe", "/enum")):
+            xml = f'<Task xmlns="urn:task"><Actions><Exec><Command>{command}</Command><Arguments>{args}</Arguments></Exec></Actions></Task>'
+            inv.add(k, {"xml": xml, "enabled": False})
+        findings = recovery_tasks(inv)
+        self.assertEqual(["delete"], [f["task"] for f in findings])
+        self.assertFalse(findings[0]["enabled"])

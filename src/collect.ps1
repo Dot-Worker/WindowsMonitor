@@ -160,7 +160,7 @@ function EventChanges {
         'System'=@(7040,7045)
         'Security'=@(4657,4697,4698,4699,4700,4701,4702,4946,4947,4948)
         'Microsoft-Windows-TaskScheduler/Operational'=@(106,140,141,200)
-        'Microsoft-Windows-Windows Defender/Operational'=@(1116,5001,5007,5010,5012)
+        'Microsoft-Windows-Windows Defender/Operational'=@(1116,1117,1118,1119,1121,1122,1123,1124,1127,1128,1129,5001,5007,5010,5012,5013)
         'Microsoft-Windows-Windows Firewall With Advanced Security/Firewall'=@(2004,2005,2006)
         'Microsoft-Windows-Sysmon/Operational'=@(7,8,25)
     }

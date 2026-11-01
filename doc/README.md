@@ -2,49 +2,54 @@
 
 在本机记录 Windows 持久化入口、配置和文件的变化。浏览器快捷方式在首次扫描就显示目标、完整参数和待核对的原因。连续扫描保留修改前后的证据，可以追查隔一段时间才出现的启动项。工具只读采集，发现变化后由用户决定如何处理。
 
-查看程序版本可运行 python monitor.py --version。
+查看程序版本可运行 .\dist\WindowsMonitor.exe --version。
+
+## 项目布局
+
+`src/` 保存源码、测试和 PowerShell 工具，`doc/` 保存说明，`plan/` 保存研究计划，`dist/` 保存独立 EXE。根目录的 `VERSION` 是源码和 EXE 共用的版本号。[八小时研究计划](../plan/八小时案例研究.md)
 
 ## 查看本机
 
-需要 64 位 Windows、64 位 Python 3.11 或更高版本，以及系统自带的 Windows PowerShell。以下命令在项目目录运行。
+使用 [单文件 WindowsMonitor.exe](../dist/WindowsMonitor.exe) 需要 64 位 Windows 和系统自带的 Windows PowerShell。运行 EXE 无需安装 Python。以下命令在项目根目录执行，源码模式可将 `.\dist\WindowsMonitor.exe` 换为 `python .\src\monitor.py`。
 
 ~~~powershell
-python monitor.py scan
-python monitor.py processes
-python monitor.py files
-.\Watch.ps1 Start
-.\Watch.ps1 Status
+.\dist\WindowsMonitor.exe scan
+.\dist\WindowsMonitor.exe processes
+.\dist\WindowsMonitor.exe files
+.\dist\WindowsMonitor.exe watch
 ~~~
 
-默认报告位于项目内的本机数据目录。打开 [.windowsmonitor/settings.html](.windowsmonitor/settings.html) 查看浏览器参数、服务、启动设置变化、两次扫描间隔内的事件和权限缺口。打开 [.windowsmonitor/files.html](.windowsmonitor/files.html) 查看文件差异。对应的 JSON 适合检索或再次分析。每个 HTML 都可以离线打开。
+单独使用 EXE 时，打开终端运行 WindowsMonitor.exe watch 即可持续采集，按 Ctrl+C 停止。仓库里的 src/Watch.ps1 是源码后台管理工具，使用它需要 Python。
+
+仓库里的 EXE 和源码默认沿用根目录的 `.windowsmonitor`。单独复制 EXE 到其他位置时，默认数据目录为 `%LOCALAPPDATA%\WindowsMonitor`，可通过 `--state` 指定。打开 [.windowsmonitor/settings.html](../.windowsmonitor/settings.html) 查看浏览器参数、服务、启动设置变化、两次扫描间隔内的事件和权限缺口。打开 [.windowsmonitor/files.html](../.windowsmonitor/files.html) 查看文件差异。对应的 JSON 适合检索或再次分析。每个 HTML 都可以离线打开。
 
 首次成功读取的状态是本机观测起点。如果某些项目第一次是在权限恢复后读到，报告会标为“首次可读”。后续轮次以各范围最近一次成功读取的内容为准。新增、删除、修改分开记录，服务或注册表键只展示发生变化的字段。Windows 更新、策略下发、用户操作也可能产生差异。报告保留本轮和上一轮的系统版本。
 
-打开 [.windowsmonitor/processes.html](.windowsmonitor/processes.html) 查看系统进程中的第三方模块、签名未知的模块和可执行内存线索。设置、进程、文件在三个独立的循环中采集。设置和进程各自在一轮结束后等待 5 分钟，文件扫描间隔为 24 小时。整个 Windows 目录每轮重新计算 SHA-256，同一轮内的硬链接可共享哈希。运行时间取决于文件总量、磁盘速度和其他程序的占用。数据库事务和扫描锁保证多个实例不会同时推进同一类基线。
+打开 [.windowsmonitor/processes.html](../.windowsmonitor/processes.html) 查看系统进程中的第三方模块、签名未知的模块和可执行内存线索。设置、进程、文件在三个独立的循环中采集。设置和进程各自在一轮结束后等待 5 分钟，文件扫描间隔为 24 小时。整个 Windows 目录每轮重新计算 SHA-256，同一轮内的硬链接可共享哈希。运行时间取决于文件总量、磁盘速度和其他程序的占用。数据库事务和扫描锁保证多个实例不会同时推进同一类基线。
 
 ~~~powershell
-.\Watch.ps1 Stop
+.\src\Watch.ps1 Stop
 # 在前台用自定义间隔运行，Ctrl+C 结束
-python monitor.py watch --interval 120 --file-hours 12
+.\dist\WindowsMonitor.exe watch --interval 120 --file-hours 12
 ~~~
 
 普通后台模式持续到当前用户退出、重启或手动停止。如需每次登录自动运行，可执行以下命令。任务名为 WindowsMonitor 加当前用户 SID，使用当前用户的普通权限。系统的任务计划权限策略适用于这一步。
 
 ~~~powershell
-.\Watch.ps1 EnableLogon
-.\Watch.ps1 DisableLogon
+.\src\Watch.ps1 EnableLogon
+.\src\Watch.ps1 DisableLogon
 ~~~
 
 如果本机执行策略限制直接调用项目脚本，可以通过单次 PowerShell 进程运行，例如
 
 ~~~powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Watch.ps1 Status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\src\Watch.ps1 Status
 ~~~
 
 若需要扩大系统进程和固件的可读范围，可在管理员 PowerShell 中运行以下命令。它会接管当前项目的后台进程并沿用现有数据目录。watch.json 中的 elevated 字段记录新进程启动时实际取得的权限。
 
 ~~~powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Watch.ps1 AdminStart
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\src\Watch.ps1 AdminStart
 ~~~
 
 ## 查看历史和完整清单
@@ -52,11 +57,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Watch.ps1 AdminStart
 HTML 和 JSON 总是展示最近一轮。SQLite 数据库保存完整的当前观测清单、每一轮的变化和覆盖缺口。即使下一轮没有变化，旧的记录仍可导出。数据文件包含程序路径、命令行、网址、策略和可能含个人信息的事件 XML，默认通过 .gitignore 排除。
 
 ~~~powershell
-python monitor.py history --limit 20
-python monitor.py history --limit 100 --out .windowsmonitor/history.json
-python monitor.py inventory
-python monitor.py inventory --scope tasks --out .windowsmonitor/tasks.json
-python monitor.py inventory --scope shortcuts --out .windowsmonitor/shortcuts.json
+.\dist\WindowsMonitor.exe history --limit 20
+.\dist\WindowsMonitor.exe history --limit 100 --out .windowsmonitor/history.json
+.\dist\WindowsMonitor.exe inventory
+.\dist\WindowsMonitor.exe inventory --scope tasks --out .windowsmonitor/tasks.json
+.\dist\WindowsMonitor.exe inventory --scope shortcuts --out .windowsmonitor/shortcuts.json
 ~~~
 
 使用 --state 指定独立数据目录。每个目录绑定一台计算机。文件范围名称也绑定到固定目录，避免误用其他目录时产生大批虚假删除。inventory 列出最后成功观测到的记录，读取时应结合最近报告中的覆盖缺口。
@@ -72,17 +77,23 @@ python monitor.py inventory --scope shortcuts --out .windowsmonitor/shortcuts.js
 - **事件日志**。对已启用且可读的 System、Security、TaskScheduler、Defender、防火墙通道保存 RecordId 游标。首次读取从当时的最新事件开始。后续补采相关服务安装/启动类型变更、任务注册/执行、注册表审计、安全软件变化等事件。日志清空或回卷时显示覆盖缺口。单通道每轮最多取 200 条匹配事件，余下的从上次游标继续读。未审计且在两次快照之间出现又消失的修改可能无法观察。
 
 ~~~powershell
-python monitor.py scan --registry 'HKLM\Software\某个厂商' --shortcuts 'D:\浏览器快捷方式'
-python monitor.py files --file-root 'ProgramFiles=C:\Program Files'
+.\dist\WindowsMonitor.exe scan --registry 'HKLM\Software\某个厂商' --shortcuts 'D:\浏览器快捷方式'
+.\dist\WindowsMonitor.exe files --file-root 'ProgramFiles=C:\Program Files'
 ~~~
+
+## 浏览器广告与勒索防护证据
+
+设置报告展示 Defender 的受控文件夹访问、潜在不受欢迎应用防护、实时保护和篡改防护状态。若相关日志可读，报告按事件区分实际阻止、仅审计及处置失败。已有任务中直接调用系统工具删除卷影副本、删除备份或关闭恢复的动作会单列；任务定义只能证明配置了该动作。
+
+当前运行账户的 Chrome 和 Edge 标准 Default、Profile N 配置目录纳入扫描。扩展同版本目录内的文件添加、删除及内容变化会列出具体相对路径。启动页保留主机名与完整值摘要，配置文件只提取选定字段。自定义浏览器数据目录、外部加载的扩展和执行时才生成的内容不在此范围。重解析点、单扩展超过 4096 文件或 128 MiB 等情况会记录为缺口。首次扫描前的扩展内容是否可信仍需独立来源佐证。[案例和检测依据](../plan/八小时案例研究.md)
 
 ## 系统进程内的第三方代码
 
 进程报告检查 Windows 目录内的可执行文件、常见系统进程名称以及部分 Windows 应用包进程。可以用 --process 额外指定进程名。每个宿主的标识包含名称、PID 和创建时间，避免 PID 重用时把两个进程混在一起。
 
 ~~~powershell
-python monitor.py processes --process ExampleService.exe
-python monitor.py inventory --scope loaded-modules --out .windowsmonitor/loaded-modules.json
+.\dist\WindowsMonitor.exe processes --process ExampleService.exe
+.\dist\WindowsMonitor.exe inventory --scope loaded-modules --out .windowsmonitor/loaded-modules.json
 ~~~
 
 报告按磁盘映像列出关联宿主，记录本次加载地址、SHA-256、Authenticode 嵌入或目录签名、签名者、证书指纹和 Windows 的 IsOSBinary 判定。加载地址保存在 loaded-modules 清单。签名有效的第三方扩展、无签名文件、签名未知和位于系统目录外的 Windows 签名文件分别展示。使用 --reference 可进一步核对 Windows 目录内模块的哈希和参考路径。磁盘签名说明的是当前文件，进程里已经映射的字节可能不同。
@@ -99,10 +110,10 @@ python monitor.py inventory --scope loaded-modules --out .windowsmonitor/loaded-
 
 ~~~powershell
 # 在干净系统上运行
-python monitor.py reference --out D:\clean-windows.sqlite --file-root 'ProgramFiles=C:\Program Files'
+.\dist\WindowsMonitor.exe reference --out D:\clean-windows.sqlite --file-root 'ProgramFiles=C:\Program Files'
 # 在待检查系统上运行
-python monitor.py scan --reference D:\clean-windows.sqlite
-python monitor.py files --reference D:\clean-windows.sqlite --file-root 'ProgramFiles=C:\Program Files'
+.\dist\WindowsMonitor.exe scan --reference D:\clean-windows.sqlite
+.\dist\WindowsMonitor.exe files --reference D:\clean-windows.sqlite --file-root 'ProgramFiles=C:\Program Files'
 ~~~
 
 程序检查 EditionID、CurrentBuild、UBR、InstallationType、体系结构和安装语言。任一不匹配就跳过原版比较。已安装的可选组件、语言包、驱动和参考来源的可信度需另行核对。保存参考清单时请保留其来源，避免被待检查机器上的软件改写。
@@ -112,17 +123,26 @@ python monitor.py files --reference D:\clean-windows.sqlite --file-root 'Program
 ## 验证
 
 ~~~powershell
-python -m unittest -v
+python -E -S -X utf8 -m unittest discover -s src -v
 ~~~
 
 测试在临时目录中模拟快捷方式追加广告网址、同版本清单中的文件被替换或删除、服务启动类型变化以及读取受限。Windows 上还会通过正常采集入口读取一个临时 .lnk 文件。
 
-## 改版并推送
+## 构建单文件 EXE
 
-在当前发布分支运行以下命令，把示例版本号换成目标版本。如果要发布新文件，先通过 git add 明确选入。脚本运行测试，更新 VERSION，提交已跟踪文件的修改及已选入的新文件，然后推送到当前上游分支。推送失败会保留本地提交，修复连接后可用相同版本号重试。
+构建机需要 64 位 Python 3.11+ 和 PyInstaller。本版使用 Python 3.13、PyInstaller 6.16.0。运行下列命令生成 `dist/WindowsMonitor.exe`。构建脚本在临时目录中测试真实 `scan` 入口，验证内置 PowerShell 采集器、版本号和 HTML 报告后再复制成品。中间文件和测试报告会随临时目录清理。
 
 ~~~powershell
-.\Release.ps1 -Version 0.1.1
+python -m pip install PyInstaller==6.16.0
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\src\Build.ps1
+~~~
+
+## 改版并推送
+
+在当前发布分支运行以下命令，把示例版本号换成目标版本。如果要发布新文件，先通过 git add 明确选入。脚本运行测试，更新 VERSION，重新构建并验证单文件 EXE，提交已跟踪文件的修改及已选入的新文件，然后推送到当前上游分支。推送失败会保留本地提交，修复连接后可用相同版本号重试。
+
+~~~powershell
+.\src\Release.ps1 -Version 0.2.1
 ~~~
 
 微软技术资料：[Shell Link 文件格式](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-shllink/)、[StringData 启动参数](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-shllink/17b69472-0f34-4bcf-b290-eccdb8de224b)、[Secure Boot 变量](https://learn.microsoft.com/powershell/module/secureboot/get-securebootuefi)、[读取固件变量](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfirmwareenvironmentvariableexa)。

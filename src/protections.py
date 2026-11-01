@@ -1,0 +1,92 @@
+"""Summarize observed settings, task actions and Windows Defender events."""
+import ntpath
+import re
+from xml.etree import ElementTree as ET
+
+
+DEFENDER = "Microsoft-Windows-Windows Defender/Operational"
+EVENTS = {
+    1116: "检测到威胁", 1117: "Defender 记录了处置动作", 1118: "威胁处置失败", 1119: "威胁处置严重错误",
+    1121: "攻击面缩减规则已阻止", 1122: "攻击面缩减规则仅审计", 1129: "用户越过攻击面缩减警告",
+    1123: "受控文件夹访问已阻止", 1124: "受控文件夹访问仅审计",
+    1127: "受控文件夹扇区写入已阻止", 1128: "受控文件夹扇区写入仅审计",
+    5001: "实时保护已关闭", 5010: "恶意或不受欢迎软件扫描已关闭", 5012: "病毒扫描已关闭",
+    5013: "篡改防护已阻止设置变更",
+}
+RECOVERY = {
+    "vssadmin": r"delete\s+shadows\b",
+    "wbadmin": r"delete\s+(?:catalog|systemstatebackup|backup)\b",
+    "wmic": r"shadowcopy\s+(?:call\s+)?delete\b",
+    "bcdedit": r"/set\s+(?:\{[^}]+\}\s+)?(?:recoveryenabled\s+no|bootstatuspolicy\s+ignoreallfailures)\b",
+}
+
+
+def recovery_tasks(inv):
+    findings = []
+    for key, data in inv.rows.values():
+        try:
+            xml = ET.fromstring(data["xml"])
+        except (ET.ParseError, KeyError):
+            continue  # The original task XML is retained in the task inventory.
+        for action in xml.findall("./{*}Actions/{*}Exec"):
+            command = (action.findtext("{*}Command") or "").strip().strip('"')
+            name = ntpath.basename(command).casefold().removesuffix(".exe")
+            arguments = (action.findtext("{*}Arguments") or "").strip()
+            if name in RECOVERY and re.match(RECOVERY[name], arguments, re.I):
+                findings.append({"task": key, "enabled": data["enabled"], "command": command, "arguments": arguments})
+    return findings
+
+
+def defense_events(event_logs):
+    findings = []
+    for event in event_logs.get(DEFENDER, {}).get("events", []):
+        if event["id"] not in EVENTS or event["provider"] != "Microsoft-Windows-Windows Defender":
+            continue
+        fields = {}
+        try:
+            xml = ET.fromstring(event["xml"])
+            for field in xml.findall("./{*}EventData/{*}Data"):
+                name = field.get("Name", "")
+                if name.casefold() in {"path", "process name", "threat name", "action name", "status description",
+                                       "detection id", "id", "target file name", "error description", "user"}:
+                    fields[name] = field.text
+        except ET.ParseError:
+            fields["readError"] = "事件 XML 无法解析"
+        findings.append({"title": EVENTS[event["id"]], "time": event["time"], "id": event["id"],
+                         "record": event["record"], "fields": fields})
+    return findings
+
+
+def browser_changes(changes):
+    findings = []
+    for row in changes:
+        if row["scope"] not in ("browser-extensions", "browser-preferences"):
+            continue
+        old, new = row.get("before", {}), row.get("after", {})
+        item = {"key": row["key"], "kind": row["kind"]}
+        if row["scope"] == "browser-preferences":
+            item["title"] = "浏览器启动或扩展配置观测变化"
+            item["fields"] = sorted(old.keys() | new.keys())
+        elif "files" in old and "files" in new and "version" not in old.keys() | new.keys():
+            item["title"] = "扩展版本未变，文件内容有变化"
+            a, b = old["files"], new["files"]
+            item["files"] = sorted(k for k in a.keys() | b.keys() if a.get(k) != b.get(k))
+        else:
+            item["title"] = "扩展安装目录或清单变化"
+        findings.append(item)
+    return findings
+
+
+def defense_state(inv):
+    settings = {}
+    for name, label, modes in (
+        ("preference\\EnableControlledFolderAccess", "受控文件夹访问",
+         {0: "关闭", 1: "阻止", 2: "仅审计", 3: "仅阻止扇区写入", 4: "仅审计扇区写入"}),
+        ("preference\\PUAProtection", "潜在不受欢迎应用防护", {0: "关闭", 1: "阻止", 2: "仅审计"}),
+        ("status\\RealTimeProtectionEnabled", "实时保护", {False: "关闭", True: "开启"}),
+        ("status\\IsTamperProtected", "篡改防护", {False: "关闭", True: "开启"}),
+        ("status\\AMRunningMode", "Defender 运行模式", {}),
+    ):
+        raw = inv.rows.get(name.casefold(), (None, None))[1]
+        settings[label] = "未知" if raw is None else modes.get(raw, str(raw))
+    return settings

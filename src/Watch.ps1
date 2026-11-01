@@ -1,6 +1,7 @@
 param([ValidateSet('Start','Status','Stop','AdminStart','EnableLogon','DisableLogon')][string]$Action='Status')
 $ErrorActionPreference = 'Stop'
-$state = Join-Path $PSScriptRoot '.windowsmonitor'
+$root = Split-Path -Parent $PSScriptRoot
+$state = Join-Path $root '.windowsmonitor'
 $scriptPath = Join-Path $PSScriptRoot 'monitor.py'
 $taskName = 'WindowsMonitor-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 
@@ -9,7 +10,9 @@ function WatchPid {
     if (-not [IO.File]::Exists($file)) { return }
     $watchId = [int](Get-Content -LiteralPath $file -Raw)
     $record = Get-CimInstance Win32_Process -Filter "ProcessId=$watchId"
-    if ($record -and $record.CommandLine -and $record.CommandLine.IndexOf($scriptPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+    $legacy = Join-Path $root 'monitor.py'
+    if ($record -and $record.CommandLine -and ($record.CommandLine.IndexOf($scriptPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $record.CommandLine.IndexOf($legacy, [StringComparison]::OrdinalIgnoreCase) -ge 0) -and
         $record.CommandLine -match '\bwatch\b') { return $watchId }
     # A non-elevated status check cannot read an elevated command line.
     if ($record -and -not $record.CommandLine -and $record.Name -in 'python.exe','pythonw.exe') {

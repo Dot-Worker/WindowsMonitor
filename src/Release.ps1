@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')][string]$Version)
 $ErrorActionPreference = 'Stop'
-Set-Location -LiteralPath $PSScriptRoot
+$root = Split-Path -Parent $PSScriptRoot
+Set-Location -LiteralPath $root
 
 function RunGit([string[]]$GitArgs) {
     & git @GitArgs
@@ -22,11 +23,12 @@ if ($LASTEXITCODE -eq 0 -and (RunGit @('ls-tree','--name-only','HEAD','--','VERS
 
 if ($Version -ne $before) {
     if ($before -and [Version]$Version -lt [Version]$before) { throw 'Choose a higher release version' }
-    & python -E -S -X utf8 -m unittest -v
+    & python -E -S -X utf8 -m unittest discover -s src -v
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed; release stopped' }
-    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'VERSION'), $Version + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $root 'VERSION'), $Version + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+    & (Join-Path $PSScriptRoot 'Build.ps1')
     RunGit @('add','-u','--','.')
-    RunGit @('add','--','VERSION')
+    RunGit @('add','--','VERSION','dist/WindowsMonitor.exe')
     $staged = @(RunGit @('diff','--cached','--name-only'))
     if ($staged -match '^\.windowsmonitor/|\.sqlite(?:-wal|-shm)?$|^__pycache__/') { throw 'Local monitor data staged; release stopped' }
     RunGit @('diff','--cached','--check')
