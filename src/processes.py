@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from inventory import Inventory, ps_inventory
+from process_targets import system_process
 
 kernel = C.WinDLL("kernel32", use_last_error=True)
 
@@ -155,17 +156,6 @@ def inspect_memory(handle, key, modules, inv):
         inv.add(label, value)
     if C.get_last_error() != 87:  # end of address space
         raise C.WinError(C.get_last_error())
-
-
-CORE = set("system registry smss.exe csrss.exe wininit.exe winlogon.exe services.exe lsass.exe svchost.exe "
-           "explorer.exe dwm.exe dllhost.exe rundll32.exe spoolsv.exe sihost.exe taskhostw.exe "
-           "shellexperiencehost.exe startmenuexperiencehost.exe searchhost.exe fontdrvhost.exe "
-           "msmpeng.exe nissrv.exe mssense.exe securityhealthservice.exe".split())
-
-
-def system_process(name, image, extras):
-    return (name.casefold() in CORE | extras or Path(image).is_relative_to(Path(os.environ["SystemRoot"]))
-            or any(s in image.casefold() for s in ("\\windowsapps\\microsoftwindows.", "\\windowsapps\\microsoft.windows.")))
 
 
 def collect_processes(extra):

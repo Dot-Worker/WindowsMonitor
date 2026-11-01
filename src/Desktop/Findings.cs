@@ -45,6 +45,20 @@ namespace WindowsMonitor {
         internal static List<Finding> Classify(Map r) {
             var all = new List<Finding>();
             var sec = Child(r, "security");
+            var activity = Child(sec,"sysmonProcesses");
+            string channel=Text(activity,"channel"), gap=Text(activity,"gap"), note=Text(activity,"note");
+            if (gap.Length>0 || note.Length>0) {
+                bool incomplete=gap.Length>0 || note.Contains("rotated") || note.Contains("pending");
+                all.Add(new Finding(incomplete ? Grade.Gap : Grade.Info, "进程事件", "Sysmon 日志覆盖",
+                    gap.Length>0 ? gap : note.Contains("Started observing") ? "首次从当前日志末尾开始记录" :
+                    note.Contains("pending") ? "还有事件待后续扫描读取" : note,
+                    new Map {{"通道",channel},{"读取结果",gap},{"游标说明",note}}));
+            }
+            foreach (var e in Rows(activity,"events")) {
+                string level=Text(e,"level");
+                all.Add(new Finding(level=="high" ? Grade.High : level=="review" ? Grade.Review : Grade.Info,
+                    "进程事件", Text(e,"title")+" · "+Text(e,"target"), Text(e,"time")+" · "+Text(e,"reason"), e));
+            }
             foreach (var v in Child(sec,"bootEvidence")) {
                 var data = v.Value as Map;
                 string status = Text(data,"status"), desc = Text(data,"description");

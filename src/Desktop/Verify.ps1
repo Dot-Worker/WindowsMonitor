@@ -66,6 +66,8 @@ function CloseClient {
     if ($launcher) { $null = Until {$launcher.HasExited} }
 }
 $report = @{time='2026-01-01T00:00:00Z'; shortcuts=@(); changes=@(); security=@{
+    sysmonProcesses=@{events=@(@{id=8;title='Fixture remote thread';level='review';target='fixture.exe';reason='fixture';time='00:02'},
+                               @{id=25;title='Fixture image change';level='high';target='fixture.exe';reason='fixture';time='00:03'})};
     taskCache=@{findings=@(@{task='\Fixture\Maintenance';descriptor='Id present, SD absent';apiVisibility='not observed';highPriority=$true})};
     browserPolicies=@(@{browser='Chrome';id=('b'*32);policy='ExtensionInstallForcelist';key='fixture'});
     state=@{'模式'='关闭'}; events=@(@{id=1116;title='Desktop test detection';time='00:00'},@{id=1124;title='Audit only';time='00:01'})};
@@ -74,9 +76,16 @@ SaveFixture 'settings.json' $report
 $mock = $null
 try {
     LaunchClient
+    Click '高风险   3'
+    $null = Until {Element '全部项目   /   3 项'}
+    Click '系统与启动项'
     Click '高风险   2'
-    $null = Until {Element '全部项目   /   2 项'}
     $null = Until {Element 'Desktop test detection'}
+    Click '进程与模块'
+    $null = Until {Element '进程与模块   /   2 项'}
+    $null = Until {Element '高风险   /   进程事件'}
+    Click '需核查   1'
+    $null = Until {Element 'Fixture remote thread · fixture.exe'}
     Click '浏览器'
     $null = Until {Element '浏览器   /   1 项'}
     $null = Until {Element '需核查   /   浏览器策略'}

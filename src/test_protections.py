@@ -7,10 +7,48 @@ from unittest.mock import patch
 from browser_inventory import browser_inventory, browser_policies
 from inventory import Inventory, TASK_CACHE_TREE
 from monitor import database, update_scope
-from protections import browser_changes, defense_events, defense_state, defender_exclusions, DEFENDER, recovery_tasks, shadow_changes, task_cache_audit, wmi_subscriptions
+from protections import browser_changes, defense_events, defense_state, defender_exclusions, DEFENDER, recovery_tasks, shadow_changes, sysmon_process_evidence, task_cache_audit, wmi_subscriptions
 
 
 class ProtectionTests(unittest.TestCase):
+    def test_sysmon_distinguishes_remote_threads_from_image_tampering(self):
+        provider = "Microsoft-Windows-Sysmon"
+        channel = provider + "/Operational"
+        remote = {"id": 8, "provider": provider, "time": "time", "record": 21, "xml":
+                  '<Event xmlns="urn:fixture"><EventData><Data Name="SourceImage">source.exe</Data>'
+                  '<Data Name="TargetImage">C:\\Windows\\explorer.exe</Data><Data Name="TargetProcessGuid">instance</Data>'
+                  '<Data Name="StartModule"/><Data Name="unrelated">omit</Data></EventData></Event>'}
+        tamper = dict(remote, id=25, record=22, xml='<Event><EventData><Data Name="Image">gone.exe</Data>'
+                      '<Data Name="Type">Image is replaced</Data></EventData></Event>')
+        logs = {channel: {"events": [remote, tamper, dict(remote, provider="wrong"), dict(remote, id=10)]},
+                "other": {"events": [remote]}}
+        results = sysmon_process_evidence(logs, {})["events"]
+        self.assertEqual([(21, "review"), (22, "high")], [(r["record"], r["level"]) for r in results])
+        self.assertEqual(r"C:\Windows\explorer.exe", results[0]["target"])
+        self.assertEqual("instance", results[0]["fields"]["targetprocessguid"])
+        self.assertIsNone(results[0]["fields"]["startmodule"])
+        self.assertNotIn("unrelated", results[0]["fields"])
+        self.assertEqual("gone.exe", results[1]["target"])
+
+    def test_sysmon_module_evidence_and_visibility(self):
+        provider = "Microsoft-Windows-Sysmon"
+        channel = provider + "/Operational"
+        def module(image, signed):
+            return {"id": 7, "provider":provider, "record":12, "time":"t", "xml":
+                    '<Event><EventData><Data Name="Image">'+image+'</Data><Data Name="ImageLoaded">addon.dll</Data>'
+                    '<Data Name="Signed">'+signed+'</Data><Data Name="Hashes">SHA256=fixture</Data></EventData></Event>'}
+        with patch.dict("os.environ", {"SystemRoot": r"D:\Win"}):
+            log = {"events": [module(r"D:\Win\System32\example.exe", "false"), module(r"D:\WinOld\example.exe", "false"),
+                              module(r"D:\Win\explorer.exe", "true")], "note":"More matching events pending"}
+            report = sysmon_process_evidence({channel: log}, {})
+        self.assertEqual(["review", "info"], [r["level"] for r in report["events"]])
+        self.assertEqual("SHA256=fixture", report["events"][0]["fields"]["hashes"])
+        self.assertIn("pending", report["note"])
+        self.assertEqual("denied", sysmon_process_evidence({}, {channel.casefold(): "denied"})["gap"])
+        observed = sysmon_process_evidence({channel: {"events": [], "note":"Started observing at current end of log"}}, {})
+        self.assertNotIn("gap", observed)
+        self.assertIn("Started observing", observed["note"])
+
     def test_wmi_bindings_link_exact_local_conditions_and_actions(self):
         def ref(cls, name, namespace="root/subscription"):
             return {"CimSystemProperties": {"ClassName": cls, "Namespace": namespace},

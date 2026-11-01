@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from inventory import Inventory, collect_settings, covered, file_tree, machine, services, shortcut_findings
-from protections import browser_changes, defense_events, defense_state, defender_exclusions, recovery_tasks, shadow_changes, task_cache_audit, wmi_subscriptions
+from protections import browser_changes, defense_events, defense_state, defender_exclusions, recovery_tasks, shadow_changes, sysmon_process_evidence, task_cache_audit, wmi_subscriptions
 
 
 FROZEN = getattr(sys, "frozen", False)
@@ -317,6 +317,10 @@ def report_html(report):
         cards("Defender 可见排除声明", [(v["type"] + " · " + v["value"], v)
                                     for v in security["exclusions"]["entries"]]) if security and "exclusions" in security else "",
         cards("阻止、审计与威胁处置事件", [(e["title"] + " · " + e["time"], e) for e in security["events"]]) if security else "",
+        cards("两次扫描之间的进程活动", [(e["title"] + " · " + e["target"], e) for e in
+                                    security.get("sysmonProcesses", {}).get("events", [])]) if security else "",
+        cards("进程事件日志覆盖", [(k, v) for k, v in security.get("sysmonProcesses", {}).items()
+                              if k != "events" and v]) if security else "",
         cards("浏览器扩展与启动配置变化", [(e["title"] + " · " + e["key"], e) for e in security["browserChanges"]]) if security else "",
         cards("登记了强制安装的浏览器扩展", [(p["browser"] + " · " + p["id"], p)
                                       for p in security.get("browserPolicies", [])]) if security else "",
@@ -413,6 +417,7 @@ def scan(args, job):
                     report["security"] = {"state": defense_state(collection["defender"]), "events": defense_events(event_logs),
                                           "exclusions": exclusions,
                                           "bootEvidence": dict(collection["uefi-details"].rows.values()),
+                                          "sysmonProcesses": sysmon_process_evidence(event_logs, collection["events"].errors),
                                           "browserChanges": browser_changes(changes), "recoveryTasks": recovery_tasks(collection["tasks"]),
                                           "shadowChanges": shadow_changes(changes),
                                           "taskCache": task_cache_audit(collection["settings/HKLM"], collection["tasks"], changes),

@@ -5,6 +5,7 @@ import os
 import re
 from xml.etree import ElementTree as ET
 from inventory import TASK_CACHE_TREE, covered
+from process_targets import system_process
 
 
 DEFENDER = "Microsoft-Windows-Windows Defender/Operational"
@@ -189,6 +190,46 @@ def defense_events(event_logs):
         findings.append({"title": EVENTS[event["id"]], "time": event["time"], "id": event["id"],
                          "record": event["record"], "fields": fields})
     return findings
+
+
+def sysmon_process_evidence(logs, errors):
+    provider = "Microsoft-Windows-Sysmon"
+    channel = provider + "/Operational"
+    log = logs.get(channel)
+    result = {"events": [], "channel": channel,
+              "visibility": "仅限 Sysmon 配置已记录的事件", "note": (log or {}).get("note", "")}
+    if log is None:
+        result["gap"] = (errors.get(channel.casefold()) or errors.get("")
+                         or "本轮未读到 Sysmon 通道，无法还原两次扫描之间的活动")
+        return result
+    allowed = {"sourceimage", "sourceprocessid", "sourceprocessguid", "targetimage", "targetprocessid",
+               "targetprocessguid", "newthreadid", "startaddress", "startmodule", "startfunction",
+               "image", "processid", "processguid", "type", "imageloaded", "hashes", "signed", "signature",
+               "signaturestatus", "utctime"}
+    for event in log.get("events", []):
+        number = event["id"]
+        if number not in (7, 8, 25) or event["provider"] != provider:
+            continue
+        fields = {k.casefold(): v for k, v in event_fields(event["xml"], allowed).items()}
+        target = fields.get("targetimage" if number == 8 else "image") or ""
+        if number == 7:
+            if not system_process(ntpath.basename(target), target):
+                continue
+            title = "模块加载：" + (ntpath.basename(fields.get("imageloaded") or "") or "路径未知")
+            signed = (fields.get("signed") or "").casefold()
+            status = (fields.get("signaturestatus") or "").casefold()
+            level = "review" if signed == "false" or status in {"invalid", "revoked", "untrusted", "expired"} else "info"
+            reason = "Sysmon 记录的模块签名：" + (fields.get("signature") or "未知") + "；加载记录本身不能证明注入"
+        elif number == 8:
+            title, level = "跨进程创建线程", "review"
+            reason = (fields.get("sourceimage") or "来源未知") + " 创建了远程线程；不能据此判定恶意载荷"
+        else:
+            title, level = "Sysmon 检测到进程映像篡改", "high"
+            reason = "Sysmon 报告的类型：" + (fields.get("type") or "未知") + "；需核查来源"
+        result["events"].append({"id": number, "title": title, "level": level, "reason": reason,
+                                 "target": target or "目标未知", "fields": fields, "provider": provider,
+                                 "record": event["record"], "time": event["time"]})
+    return result
 
 
 def browser_changes(changes):

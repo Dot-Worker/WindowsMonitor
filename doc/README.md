@@ -120,6 +120,8 @@ UEFI 启动项不仅保存摘要，还解析 EFI_LOAD_OPTION 的描述和文件�
 
 两次快照之间的短暂加载或注入可能漏过。若已有 Sysmon 日志，设置报告也会从保存的游标读取事件 7、8 和 25，分别对应映像加载、远程线程和进程映像篡改。可见性取决于现有日志配置和权限。受保护进程、无法读取的模块和未驻留的私有映像页限制了用户态扫描的覆盖范围。[Sysmon 事件说明](https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon)、[虚拟内存区域](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualqueryex)、[工作集页属性](https://learn.microsoft.com/en-us/windows/win32/api/psapi/ns-psapi-psapi_working_set_ex_block)、[Authenticode 检查](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/get-authenticodesignature)。
 
+客户端在「进程与模块」单列最近一次设置扫描读到的 Sysmon 证据。事件 7 展示符合默认系统进程范围的模块路径、日志签名和哈希（如果有）；它记录加载，无法证明由谁注入。事件 8 展示源进程、目标进程、进程 GUID、线程入口，标为「需核查」，入口模块未能解析不升级危险等级。事件 25 记录进程映像篡改，标为「高风险」，并保留日志给出的类型。事件 8 和 25 不限目标进程。每项保留记录号和时间，目标进程已经退出也可复核。首次设置扫描从日志末尾开始；未安装 Sysmon、访问受限、日志轮转或积压时，界面提示覆盖情况。历史可通过 `WindowsMonitor.exe history --limit 100 --out history.json` 导出。客户端不会安装 Sysmon 或更改其规则。
+
 ## 原版文件和初始服务
 
 没有干净来源时，本机基线能证明“从首次观测起内容变化”或“之前可读的文件已消失”。首次扫描前已存在的替换、缺失或新增服务属于未知。Windows 文件签名也无法证明一个特定路径在某个补丁、语言包或功能配置下应当存在。
