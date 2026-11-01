@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -429,7 +430,7 @@ def main():
     p = argparse.ArgumentParser(description="WindowsMonitor 本机只读监控")
     p.add_argument("--version", action="version", version="WindowsMonitor " + APP_VERSION)
     subs = p.add_subparsers(dest="command", required=True)
-    for name in ("scan", "files", "processes", "watch", "reference", "history", "inventory"):
+    for name in ("ui", "scan", "files", "processes", "watch", "reference", "history", "inventory"):
         c = subs.add_parser(name)
         if name != "reference":
             c.add_argument("--state", type=Path, default=default_state())
@@ -454,8 +455,10 @@ def main():
         if name == "inventory":
             c.add_argument("--scope", help="导出指定范围，省略时列出范围及记录数")
             c.add_argument("--out", type=Path, help="将结果写入 JSON 文件")
-    args = p.parse_args()
-    if args.command == "reference":
+    args = p.parse_args(sys.argv[1:] or ["ui"])
+    if args.command == "ui":
+        desktop(args.state)
+    elif args.command == "reference":
         reference(args.out, file_roots(args.file_root), machine()[1])
     elif args.command == "inventory":
         uri = (args.state / "monitor.sqlite").resolve().as_uri() + "?mode=ro"
@@ -498,9 +501,26 @@ def file_wait(state, delay):
     return max(0, min(delay, delay - age))
 
 
+def desktop(state):
+    def launch(exe):
+        cmd = [str(exe), str(state.resolve()), sys.executable, "" if FROZEN else str(Path(__file__).resolve()), APP_VERSION]
+        subprocess.run(cmd, check=True)
+
+    if FROZEN:
+        launch(Path(__file__).with_name("WindowsMonitor.Desktop.exe"))
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp, "WindowsMonitor.Desktop.exe")
+            powershell = Path(os.environ["SystemRoot"], "System32/WindowsPowerShell/v1.0/powershell.exe")
+            subprocess.run([str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                            str(Path(__file__).parent / "Desktop/Compile.ps1"), str(exe)], check=True)
+            launch(exe)
+
+
 def watch(args):
     from threading import Event, Thread
     stop = Event()
+    wake = {job: Event() for job in ("settings", "processes", "files")}
     with lock(args.state, "watch"):
         pidfile = args.state / "watch.pid"
         token_info = args.state / "watch.json"
@@ -508,14 +528,17 @@ def watch(args):
         signal.unlink(missing_ok=True)
         from ctypes import windll
         atomic(token_info, encode({"pid": os.getpid(), "elevated": bool(windll.shell32.IsUserAnAdmin()), "started": now(),
-                                  "monitorVersion": APP_VERSION}))
+                                  "monitorVersion": APP_VERSION, "manualRequests": True}))
         atomic(pidfile, str(os.getpid()))
         def loop(job, delay):
             while not stop.is_set():
-                if job == "files" and not args.file_root and not args.reference:
+                manual = wake[job].is_set()
+                if manual:
+                    wake[job].clear()
+                if job == "files" and not manual and not args.file_root and not args.reference:
                     pending = file_wait(args.state, delay)
                     if pending:
-                        stop.wait(pending)
+                        wake[job].wait(pending)
                         continue
                 retry_after = delay
                 try:
@@ -523,7 +546,7 @@ def watch(args):
                 except Exception as exc:
                     say(f"{now()} {job} 扫描失败：{exc}")
                     retry_after = min(delay, 300)
-                stop.wait(retry_after)
+                wake[job].wait(retry_after)
 
         workers = [Thread(target=loop, args=(job, delay), daemon=True)
                    for job, delay in (("settings", args.interval), ("processes", args.interval), ("files", args.file_hours * 3600))]
@@ -531,11 +554,18 @@ def watch(args):
             thread.start()
         try:
             while all(t.is_alive() for t in workers) and not signal.exists():
+                for job, event in wake.items():
+                    request = args.state / (job + ".request")
+                    if request.exists():
+                        request.unlink(missing_ok=True)
+                        event.set()
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
         finally:
             stop.set()
+            for event in wake.values():
+                event.set()
             pidfile.unlink(missing_ok=True)
             token_info.unlink(missing_ok=True)
             signal.unlink(missing_ok=True)

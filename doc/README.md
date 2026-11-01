@@ -10,6 +10,10 @@
 
 ## 查看本机
 
+双击 EXE 会打开原生 .NET Windows Forms 监控中心。左栏选择系统与启动项、浏览器、进程与模块、系统文件或读取缺口；中栏搜索、筛选项目，右栏显示判定依据和证据。可点击“扫描系统与启动项”“扫描进程与模块”或“扫描系统文件”单独执行一轮。勾选“打开后自动监控”会立即启动持续监控并记住选择，之后每次打开会连接已有后台或启动一个新后台。关闭窗口后后台继续运行，可从“停止持续监控”结束。窗口显示正在扫描的类别和每个报告的更新时间。
+
+红色“高风险”用于 Defender 检测到威胁或处置失败等优先检查事件；橙色“需核查”包括新增启动入口、可疑网址或需核对的模块；蓝色“一般记录”包括普通签名扩展和审计事件；灰色“读取缺口”表示证据不完整。等级用于决定查看顺序，同一条事件的实际动作及时间请在详情中核对。点击色块可以筛选，再点一次恢复。
+
 使用 [单文件 WindowsMonitor.exe](../dist/WindowsMonitor.exe) 需要 64 位 Windows 和系统自带的 Windows PowerShell。运行 EXE 无需安装 Python。以下命令在项目根目录执行，源码模式可将 `.\dist\WindowsMonitor.exe` 换为 `python .\src\monitor.py`。
 
 ~~~powershell
@@ -129,6 +133,8 @@ python -E -S -X utf8 -m unittest discover -s src -v
 测试在临时目录中模拟快捷方式追加广告网址、同版本清单中的文件被替换或删除、服务启动类型变化以及读取受限。Windows 上还会通过正常采集入口读取一个临时 .lnk 文件。
 
 ## 构建单文件 EXE
+
+桌面界面使用 .NET Framework 4.x Windows Forms，C# 源码位于 src/Desktop。构建脚本还会调用系统自带的 C# 编译器，并在交互式 Windows 会话中打开测试窗口，验证等级筛选、手动扫描请求、自动启动与停止。
 
 构建机需要 64 位 Python 3.11+ 和 PyInstaller。本版使用 Python 3.13、PyInstaller 6.16.0。运行下列命令生成 `dist/WindowsMonitor.exe`。构建脚本在临时目录中测试真实 `scan` 入口，验证内置 PowerShell 采集器、版本号和 HTML 报告后再复制成品。中间文件和测试报告会随临时目录清理。
 
