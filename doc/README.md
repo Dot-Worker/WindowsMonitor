@@ -103,6 +103,8 @@ Defender 的可见排除项按路径、文件扩展名、进程和 IP 地址分�
 
 设置报告会将本地 root/subscription 中可解析的永久 WMI 绑定与其过滤器、命令行或脚本消费者关联。可核对 WQL 触发条件、目标命令或脚本文件；内联脚本在关联摘要中仅展示字节数与 SHA-256。未绑定的消费者和普通日志消费者不会据此标为可执行订阅。无法解析的引用或不可读对象保留为缺口。若已有 Sysmon 对应日志，还会补采事件 19、20、21。这些事件与绑定记录能证明配置或登记活动，执行结果需要其他证据。[微软 WMI 绑定定义](https://learn.microsoft.com/en-us/windows/win32/wmisdk/--filtertoconsumerbinding) · [Sysmon 事件定义](https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon)
 
+UEFI 启动项不仅保存摘要，还解析 EFI_LOAD_OPTION 的描述和文件路径节点，附加启动数据只记录长度。前次已观测的 Boot#### 即使退出 BootOrder 也会再读；只有运行时接口确认变量不存在时，才会把此前读到的变量列为缺失。未继续请求的自定义变量列为覆盖缺口。shim 的 MokListRT、MokListXRT 运行时镜像会单列；镜像未找到不代表启动阶段的 MokList 为空，也无法证明 EFI 系统分区或固件芯片完整。[ESET BlackLotus 分析](https://www.welivesecurity.com/2023/03/01/blacklotus-uefi-bootkit-myth-confirmed/) · [shim 镜像实现](https://github.com/rhboot/shim/blob/main/mok.c)
+
 ## 系统进程内的第三方代码
 
 进程报告检查 Windows 目录内的可执行文件、常见系统进程名称以及部分 Windows 应用包进程。可以用 --process 额外指定进程名。每个宿主的标识包含名称、PID 和创建时间，避免 PID 重用时把两个进程混在一起。

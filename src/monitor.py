@@ -311,6 +311,7 @@ def report_html(report):
         f"<h1>WindowsMonitor 本机报告</h1><p>{esc(report['time'])} · {esc(report['job'])} · {esc(report['version']['CurrentBuild'])}.{esc(report['version']['UBR'])}</p>",
         f"<p>{esc(report['baselineNote'])}。{esc(ref['status'])}。</p>",
         cards("Defender 当前配置", list(security["state"].items())) if security else "",
+        cards("UEFI 启动项与 shim 运行时镜像", list(security["bootEvidence"].items())) if security and "bootEvidence" in security else "",
         cards("Defender 排除范围及可见性", [(v["type"] + " · 可见 " + str(v["visible"]) + " 项", v)
                                          for v in security["exclusions"]["categories"]]) if security and "exclusions" in security else "",
         cards("Defender 可见排除声明", [(v["type"] + " · " + v["value"], v)
@@ -362,8 +363,9 @@ def scan(args, job):
         else:
             with database(state / "monitor.sqlite") as reader:
                 cursors = {k[6:]: int(v) for k, v in reader.execute("SELECT name,value FROM metadata WHERE name LIKE 'event/%'")}
+                previous_uefi = [r[0] for r in reader.execute("SELECT label FROM items WHERE scope='uefi'")]
             reader.close()
-            collection = collect_settings(args.registry, args.shortcuts, cursors, args.uefi)
+            collection = collect_settings(args.registry, args.shortcuts, cursors, args.uefi, previous_uefi)
             exclusions = defender_exclusions(collection["defender"])
         ref = compare_reference(args.reference, version, collection)
         db = database(state / "monitor.sqlite")
@@ -410,6 +412,7 @@ def scan(args, job):
                 if job == "settings":
                     report["security"] = {"state": defense_state(collection["defender"]), "events": defense_events(event_logs),
                                           "exclusions": exclusions,
+                                          "bootEvidence": dict(collection["uefi-details"].rows.values()),
                                           "browserChanges": browser_changes(changes), "recoveryTasks": recovery_tasks(collection["tasks"]),
                                           "shadowChanges": shadow_changes(changes),
                                           "taskCache": task_cache_audit(collection["settings/HKLM"], collection["tasks"], changes),

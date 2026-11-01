@@ -45,6 +45,12 @@ namespace WindowsMonitor {
         internal static List<Finding> Classify(Map r) {
             var all = new List<Finding>();
             var sec = Child(r, "security");
+            foreach (var v in Child(sec,"bootEvidence")) {
+                var data = v.Value as Map;
+                string status = Text(data,"status"), desc = Text(data,"description");
+                all.Add(new Finding(Grade.Info, "UEFI 启动", v.Key,
+                    status.Length>0 ? status : "启动项描述："+desc, v.Value));
+            }
             foreach (var e in Rows(sec, "events")) {
                 string id = Text(e, "id");
                 Grade g = new[]{"1116","1118","1119"}.Contains(id) ? Grade.High :
@@ -110,6 +116,7 @@ namespace WindowsMonitor {
                 string scope = Text(c,"scope"), kind = Text(c,"kind");
                 if (scope=="shadows") continue;
                 bool persistence = scope == "services" || scope == "tasks" || scope.StartsWith("autorun/") || scope == "defender";
+                if (scope=="uefi-details" || (scope=="uefi" && Text(c,"key")=="BootOrder")) persistence=true;
                 all.Add(new Finding(persistence && (kind == "修改" || kind == "新增" || kind == "删除") ? Grade.Review : Grade.Info,
                     "观测变化", Text(c,"key"), scope + " · " + kind, c));
             }

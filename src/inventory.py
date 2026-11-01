@@ -358,7 +358,7 @@ def ps_inventory(section, cursors=None, input_data=None):
 SECTIONS = ("tasks", "firewall", "defender", "firmware", "gpo", "wmi", "system", "shadows")
 
 
-def collect_settings(extra_registry, extra_dirs, cursors, extra_uefi):
+def collect_settings(extra_registry, extra_dirs, cursors, extra_uefi, previous_uefi=()):
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         pending = {s: pool.submit(ps_inventory, s) for s in SECTIONS}
@@ -377,7 +377,8 @@ def collect_settings(extra_registry, extra_dirs, cursors, extra_uefi):
         results.update(browser_inventory())
         from firmware import read_variables
         results["uefi"] = Inventory()
-        read_variables(results["uefi"], extra_uefi)
+        results["uefi-details"] = Inventory()
+        read_variables(results["uefi"], extra_uefi, previous_uefi, results["uefi-details"])
         for section, future in pending.items():
             results[section] = future.result()
     return results
