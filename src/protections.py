@@ -91,11 +91,15 @@ def browser_changes(changes):
     findings = []
     packages = {row["key"].casefold() for row in changes if row["scope"] == "browser-extensions"}
     for row in changes:
-        if row["scope"] not in ("browser-extensions", "browser-preferences", "browser-entrypoints"):
+        if row["scope"] not in ("browser-extensions", "browser-preferences", "browser-entrypoints", "browser-policy"):
             continue
         old, new = row.get("before", {}), row.get("after", {})
         item = {"key": row["key"], "kind": row["kind"]}
-        if row["scope"] == "browser-entrypoints":
+        if row["scope"] == "browser-policy":
+            item["title"] = "浏览器强制安装策略观测变化"
+            item["before"] = old
+            item["after"] = new
+        elif row["scope"] == "browser-entrypoints":
             package = "\\".join(row["key"].split("\\", 4)[:4]).casefold()
             if package in packages:
                 continue

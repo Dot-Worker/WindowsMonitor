@@ -326,6 +326,8 @@ def report_html(report):
         cards("Defender 当前配置", list(security["state"].items())) if security else "",
         cards("阻止、审计与威胁处置事件", [(e["title"] + " · " + e["time"], e) for e in security["events"]]) if security else "",
         cards("浏览器扩展与启动配置变化", [(e["title"] + " · " + e["key"], e) for e in security["browserChanges"]]) if security else "",
+        cards("登记了强制安装的浏览器扩展", [(p["browser"] + " · " + p["id"], p)
+                                      for p in security.get("browserPolicies", [])]) if security else "",
         cards("可能影响系统恢复的计划任务", [(e["task"], e) for e in security["recoveryTasks"]]) if security else "",
         cards("卷影存储与副本的观测变化", [(e["title"] + " · " + e["key"], e) for e in security.get("shadowChanges", [])]) if security else "",
         (f"<p>{proc['hosts']} 个系统进程 · {proc['modules']} 条加载记录 · {proc['files']} 个磁盘映像。"
@@ -409,7 +411,8 @@ def scan(args, job):
                 if job == "settings":
                     report["security"] = {"state": defense_state(collection["defender"]), "events": defense_events(event_logs),
                                           "browserChanges": browser_changes(changes), "recoveryTasks": recovery_tasks(collection["tasks"]),
-                                          "shadowChanges": shadow_changes(changes)}
+                                          "shadowChanges": shadow_changes(changes),
+                                          "browserPolicies": [{"key": key, **value} for key, value in collection["browser-policy"].rows.values()]}
                 # Journal differences and gaps. Current full inventory is in items.
                 journal = {k: v for k, v in report.items() if k != "services"}
                 db.execute("INSERT INTO runs(job,stamp,version,report) VALUES(?,?,?,?)",

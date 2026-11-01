@@ -179,7 +179,7 @@ namespace WindowsMonitor {
             if(grades[3]==null)return;
             for(int i=0;i<nav.Length;i++){nav[i].Active=i==view;nav[i].Invalidate();}
             var source=rows.Where(p=>view==0||view==5||p.Key==(view==3?"processes":view==4?"files":"settings")).SelectMany(p=>p.Value)
-                .Where(f=>view==2?(f.Source=="快捷方式"||f.Source=="浏览器扩展"):view!=5||f.Grade==Grade.Gap);
+                .Where(f=>view==2?(f.Source=="快捷方式"||f.Source=="浏览器扩展"||f.Source=="浏览器策略"):view!=5||f.Grade==Grade.Gap);
             string query=search.Text.Trim();
             var items=source.Where(x=>query.Length==0||(x.Title+" "+x.Reason+" "+x.Source).IndexOf(query,StringComparison.OrdinalIgnoreCase)>=0).ToList();
             for(int i=0;i<4;i++){

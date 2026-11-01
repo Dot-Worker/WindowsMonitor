@@ -95,6 +95,8 @@ HTML 和 JSON 总是展示最近一轮。SQLite 数据库保存完整的当前�
 
 任务中的卷影存储额度调整会单独标出。每次设置扫描还读取本机可访问的 VSS 存储关联、额度字节数和卷影副本 ID。报告分别展示任务动作与两次观测之间的额度变化、副本出现或消失；额度下降和副本消失进入“需核查”。快照过期、维护操作也可产生这些变化，单凭快照无法归因。WMI 不可读时记录覆盖缺口；没有可读基线时不能还原先前发生的删除。[联合通告](https://www.ic3.gov/CSA/2020/201102.pdf) · [微软命令说明](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/vssadmin-resize-shadowstorage)
 
+“浏览器”分类会显示可读的 Chrome、Edge 强制安装策略，包含策略所属机器或已加载用户、注册表位置、扩展 ID，以及更新地址的协议、主机和摘要。首次扫描也会列出已登记条目。后续变化记录在 browser-policy 范围。策略可能由组织正常部署；是否实际安装还取决于浏览器和有效策略。可用本机策略页 chrome://policy 或 edge://policy 复核。摘要不会复述更新 URL 的凭据或查询参数；原始策略仍按现有注册表采集规则保存在本机。[微软策略定义](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/extensioninstallforcelist)
+
 ## 系统进程内的第三方代码
 
 进程报告检查 Windows 目录内的可执行文件、常见系统进程名称以及部分 Windows 应用包进程。可以用 --process 额外指定进程名。每个宿主的标识包含名称、PID 和创建时间，避免 PID 重用时把两个进程混在一起。

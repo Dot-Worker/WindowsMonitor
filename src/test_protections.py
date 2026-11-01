@@ -4,13 +4,56 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from browser_inventory import browser_inventory
+from browser_inventory import browser_inventory, browser_policies
 from inventory import Inventory
 from monitor import database, update_scope
 from protections import browser_changes, defense_events, defense_state, DEFENDER, recovery_tasks, shadow_changes
 
 
 class ProtectionTests(unittest.TestCase):
+    def test_force_policy_inventory_and_changes(self):
+        db = database(":memory:")
+        self.addCleanup(db.close)
+        extension_id = "a" * 32
+        key = r"Software\WOW6432Node\Policies\Microsoft\Edge\ExtensionInstallForcelist"
+        inv = Inventory()
+        inv.add(key, {"1": [1, extension_id + ";https://user:secret@updates.example/feed?token=private"]})
+        current = browser_policies({"policy/HKLM": inv})
+        item = next(iter(current.rows.values()))[1]
+        self.assertEqual(("Edge", extension_id, "updates.example"), (item["browser"], item["id"], item["update"]["host"]))
+        self.assertNotIn("secret", json.dumps(item))
+        self.assertNotIn("private", json.dumps(item))
+        self.assertEqual([], update_scope(db, "browser-policy", current))
+        denied = Inventory()
+        denied.fail(r"software\wow6432node\policies", "denied")
+        self.assertEqual([], update_scope(db, "browser-policy", browser_policies({"policy/HKLM": denied})))
+        result = browser_changes(update_scope(db, "browser-policy", Inventory()))
+        self.assertEqual("删除", result[0]["kind"])
+        self.assertEqual(extension_id, result[0]["before"]["id"])
+
+    def test_grouped_settings_and_invalid_json_preserve_evidence(self):
+        key = r"Software\Policies\Google\Chrome"
+        eid = "b"*32
+        registry = Inventory()
+        scope = {"policy/S-1-test": registry}
+        def settings(value):
+            registry.add(key, {"ExtensionSettings": [1, value]})
+            return browser_policies(scope)
+        current = settings(json.dumps({eid + "," + "c"*32: {"installation_mode": "force_installed",
+                                   "update_url": "file:///local/update.xml"}, "*": {"installation_mode": "blocked"}}))
+        self.assertEqual(2, len(current.rows))
+        db = database(":memory:")
+        self.addCleanup(db.close)
+        update_scope(db, "browser-policy", current)
+        broken = settings("{")
+        self.assertTrue(broken.errors)
+        self.assertEqual([], update_scope(db, "browser-policy", broken))
+        allowed = settings(json.dumps({eid: {"installation_mode":"allowed"}}))
+        self.assertFalse(allowed.rows)
+        self.assertEqual(2, len(update_scope(db, "browser-policy", allowed)))
+        registry.add(key + r"\Recommended\ExtensionInstallForcelist", {"1": [1, eid]})
+        self.assertFalse(browser_policies(scope).rows)
+
     def test_entrypoints_survive_package_limit_and_one_unreadable_script(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -144,6 +144,78 @@ def redact_location(value):
     return {"host": uri.hostname, "sha256": hashlib.sha256(raw.encode()).hexdigest()}
 
 
+def browser_policies(registries):
+    inv = Inventory()
+    roots = {}
+    for view in ("Software", "Software\\WOW6432Node"):
+        for browser, vendor in (("Chrome", "Google\\Chrome"), ("Edge", "Microsoft\\Edge")):
+            roots[(view + "\\Policies\\" + vendor).casefold()] = browser
+
+    def record(key, browser, path, value_name, ext_id, setting, update_url, override):
+        if not re.fullmatch("[a-p]{32}", ext_id):
+            raise ValueError("扩展 ID 格式不正确")
+        source = {"source": "浏览器默认商店" if setting == "ExtensionInstallForcelist" else "未指定更新位置"}
+        if update_url:
+            if not isinstance(update_url, str):
+                raise ValueError("更新地址格式不正确")
+            source = {**redact_location(update_url), "scheme": urlsplit(update_url).scheme}
+        inv.add(key, {"browser": browser, "registryKey": path, "valueName": value_name, "id": ext_id,
+                      "policy": setting, "update": source, "overrideUpdateUrl": override})
+
+    for scope, registry in registries.items():
+        if not scope.startswith("policy/"):
+            continue
+        principal = scope.split("/", 1)[1]
+        for prefix, reason in registry.errors.items():
+            if not prefix or any(k == prefix or k.startswith(prefix + "\\") or k + "\\extensioninstallforcelist" == prefix for k in roots):
+                inv.fail(principal + ("\\" + prefix if prefix else ""), reason)
+        for path, values in registry.rows.values():
+            normalized = path.casefold()
+            parent, _, leaf = normalized.rpartition("\\")
+            is_list = parent in roots and leaf == "extensioninstallforcelist"
+            if not is_list and normalized not in roots:
+                continue
+            browser = roots[parent if is_list else normalized]
+            for name, (kind, raw) in values.items():
+                key = principal + "\\" + path + "\\" + name
+                if not is_list and name.casefold() != "extensionsettings":
+                    continue
+                try:
+                    if kind != 1 or not isinstance(raw, str):
+                        raise ValueError("不是 REG_SZ 策略值")
+                    if is_list:
+                        if not re.fullmatch("[1-9][0-9]*", name):
+                            raise ValueError("非标准列表序号")
+                        ext_id, _, url = raw.partition(";")
+                        record(key, browser, path, name, ext_id.strip(), "ExtensionInstallForcelist", url.strip(), None)
+                    else:
+                        if len(raw) > 2 << 20:
+                            raise ValueError("ExtensionSettings 超过 2 MiB")
+                        settings = json.loads(raw)
+                        if not isinstance(settings, dict):
+                            raise ValueError("ExtensionSettings 不是 JSON 对象")
+                        for group, rule in settings.items():
+                            if isinstance(rule, dict) and rule.get("installation_mode") != "force_installed":
+                                continue
+                            for ext_id in group.split(","):
+                                ext_id = ext_id.strip()
+                                if not re.fullmatch("[a-p]{32}", ext_id):
+                                    selector = hashlib.sha256(ext_id.encode()).hexdigest()[:16]
+                                    inv.fail(key + "\\selector-" + selector, "不是可单独识别的扩展 ID")
+                                    continue
+                                entry = key + "\\" + ext_id
+                                try:
+                                    if not isinstance(rule, dict):
+                                        raise ValueError("扩展设置不是 JSON 对象")
+                                    record(entry, browser, path, name, ext_id, "ExtensionSettings",
+                                           rule.get("update_url"), rule.get("override_update_url"))
+                                except ValueError as exc:
+                                    inv.fail(entry, exc)
+                except (ValueError, RecursionError) as exc:
+                    inv.fail(key, exc)
+    return inv
+
+
 def preferences(path):
     data = json.loads(file_bytes(path, 32 << 20).decode("utf-8-sig"))
     if not isinstance(data, dict):

@@ -67,6 +67,9 @@ namespace WindowsMonitor {
                     "卷影恢复", Text(v,"key"), Text(v,"title"), v));
             foreach (var b in Rows(sec,"browserChanges"))
                 all.Add(new Finding(Grade.Review, "浏览器扩展", Text(b,"key"), Text(b,"title"), b));
+            foreach (var b in Rows(sec,"browserPolicies"))
+                all.Add(new Finding(Grade.Review, "浏览器策略", Text(b,"browser")+" · "+Text(b,"id"),
+                    "策略声明强制安装。请核对管理来源及更新位置，组织策略也可产生此记录。", b));
             foreach (var s in Rows(r,"shortcuts")) {
                 string reason = Text(s,"reason");
                 all.Add(new Finding(reason.Contains("网址") || reason.Contains("敏感") ? Grade.Review : Grade.Info,
