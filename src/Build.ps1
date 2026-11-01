@@ -40,15 +40,27 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Packaged desktop verification failed' }
     $target = Join-Path $dist 'WindowsMonitor.exe'
     $stage = Join-Path $dist ([Guid]::NewGuid().ToString('N') + '.tmp')
+    # Windows can retain a mapped executable until the old client exits. Give it
+    # a name on the same volume outside dist, instead of a Windows-generated ~RF TMP in dist.
+    $retired = Join-Path $root '.windowsmonitor\retired-builds'
+    [void][IO.Directory]::CreateDirectory($retired)
     try {
         [IO.File]::Copy($exe, $stage)
         if ([IO.File]::Exists($target)) {
-            [IO.File]::Replace($stage, $target, [NullString]::Value)
+            $backup = Join-Path $retired ('retired-' + [Guid]::NewGuid().ToString('N') + '.old')
+            [IO.File]::Replace($stage, $target, $backup)
         } else {
             [IO.File]::Move($stage, $target)
         }
     } finally {
         if ([IO.File]::Exists($stage)) { [IO.File]::Delete($stage) }
+    }
+    foreach ($old in Get-ChildItem -LiteralPath $retired -File -Filter 'retired-*.old') {
+        if ($old.Name -match '^retired-[a-f0-9]{32}\.old$' -and -not ($old.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            try { [IO.File]::Delete($old.FullName) }
+            catch [IO.IOException] { }  # The old process still has this image mapped.
+            catch [UnauthorizedAccessException] { }
+        }
     }
     Get-FileHash -LiteralPath $target -Algorithm SHA256
 } finally {
