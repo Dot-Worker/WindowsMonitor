@@ -340,7 +340,7 @@ def ps_inventory(section, cursors=None, input_data=None):
     return inv
 
 
-SECTIONS = ("tasks", "firewall", "defender", "firmware", "gpo", "wmi", "system")
+SECTIONS = ("tasks", "firewall", "defender", "firmware", "gpo", "wmi", "system", "shadows")
 
 
 def collect_settings(extra_registry, extra_dirs, cursors, extra_uefi):

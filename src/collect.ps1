@@ -127,6 +127,28 @@ function SystemSettings {
     $control = Get-Item 'HKLM:\SYSTEM\CurrentControlSet\Control'
     Emit 'serviceAutoStartDelay' ($control.GetValue('AutoStartDelay'))
 }
+function VolumeId($value) {
+    $text = if ($value.DeviceID) { [string]$value.DeviceID } else { [string]$value }
+    if ($text -match '(?i)Volume(\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\})') {
+        return $matches[1].ToLowerInvariant()
+    }
+    throw 'Volume GUID unavailable'
+}
+function ShadowInventory {
+    try {
+        foreach ($storage in (Get-CimInstance -ClassName Win32_ShadowStorage)) {
+            $src = VolumeId $storage.Volume
+            $dst = VolumeId $storage.DiffVolume
+            Emit ("storage\$src\$dst") @{volume=$src; storageVolume=$dst; maxBytes=[string]$storage.MaxSpace}
+        }
+    } catch { Gap 'storage' $_ }
+    try {
+        foreach ($copy in (Get-CimInstance -ClassName Win32_ShadowCopy)) {
+            if (-not $copy.ID) { throw 'Shadow copy ID unavailable' }
+            Emit ('copies\' + $copy.ID) @{volume=[string]$copy.VolumeName; setId=[string]$copy.SetID; persistent=$copy.Persistent}
+        }
+    } catch { Gap 'copies' $_ }
+}
 function Signatures {
     Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1')
     foreach ($path in (ConvertFrom-Json ([Console]::In.ReadToEnd()))) {
@@ -218,6 +240,7 @@ try {
         wmi { WmiStartup }
         events { EventChanges }
         system { SystemSettings }
+        shadows { ShadowInventory }
         signatures { Signatures }
         default { throw 'Unknown section' }
     }

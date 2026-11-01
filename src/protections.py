@@ -14,7 +14,7 @@ EVENTS = {
     5013: "篡改防护已阻止设置变更",
 }
 RECOVERY = {
-    "vssadmin": r"delete\s+shadows\b",
+    "vssadmin": r"(?:delete\s+shadows|resize\s+shadowstorage)\b",
     "wbadmin": r"delete\s+(?:catalog|systemstatebackup|backup)\b",
     "wmic": r"shadowcopy\s+(?:call\s+)?delete\b",
     "bcdedit": r"/set\s+(?:\{[^}]+\}\s+)?(?:recoveryenabled\s+no|bootstatuspolicy\s+ignoreallfailures)\b",
@@ -33,8 +33,38 @@ def recovery_tasks(inv):
             name = ntpath.basename(command).casefold().removesuffix(".exe")
             arguments = (action.findtext("{*}Arguments") or "").strip()
             if name in RECOVERY and re.match(RECOVERY[name], arguments, re.I):
-                findings.append({"task": key, "enabled": data["enabled"], "command": command, "arguments": arguments})
+                reason = "任务配置了删除备份或关闭恢复的命令"
+                if name == "vssadmin" and arguments.lower().startswith("resize"):
+                    reason = "任务配置了卷影存储额度调整，实际影响需对比额度和副本"
+                findings.append({"task": key, "enabled": data["enabled"], "command": command, "arguments": arguments, "reason": reason})
     return findings
+
+
+def shadow_changes(changes):
+    result = []
+    for row in changes:
+        if row["scope"] != "shadows":
+            continue
+        kind = row["kind"]
+        before, after = row.get("before", {}), row.get("after", {})
+        review = False
+        if row["key"].startswith("copies\\"):
+            title = "卷影副本不再可见" if kind == "删除" else "卷影副本观测：" + kind
+            review = kind == "删除"
+        elif kind == "删除":
+            title, review = "卷影存储关联不再可见", True
+        elif "maxBytes" in before and "maxBytes" in after:
+            try:
+                prior, current = int(before["maxBytes"]), int(after["maxBytes"])
+                review = current < prior
+                title = "卷影存储额度数值下降" if review else "卷影存储额度数值上升"
+            except (TypeError, ValueError):
+                title = "卷影存储额度发生变化，大小未知"
+                review = True
+        else:
+            title = "卷影存储关联观测：" + kind
+        result.append({"title": title, "review": review, "key": row["key"], "kind": kind, "before": before, "after": after})
+    return result
 
 
 def defense_events(event_logs):

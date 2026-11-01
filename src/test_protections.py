@@ -7,7 +7,7 @@ from unittest.mock import patch
 from browser_inventory import browser_inventory
 from inventory import Inventory
 from monitor import database, update_scope
-from protections import browser_changes, defense_events, defense_state, DEFENDER, recovery_tasks
+from protections import browser_changes, defense_events, defense_state, DEFENDER, recovery_tasks, shadow_changes
 
 
 class ProtectionTests(unittest.TestCase):
@@ -118,3 +118,34 @@ class ProtectionTests(unittest.TestCase):
         findings = recovery_tasks(inv)
         self.assertEqual(["delete"], [f["task"] for f in findings])
         self.assertFalse(findings[0]["enabled"])
+
+    def test_resize_task_is_configuration_not_deletion(self):
+        inv = Inventory()
+        for name, args in (("adjust", "ReSize  shadowStorage /maxsize=401MB"), ("inspect", "list shadowstorage"),
+                           ("invalid", "resize shadowstoragex"), ("free-text", "help resize shadowstorage")):
+            xml = f"<Task><Actions><Exec><Command>vssadmin.exe</Command><Arguments>{args}</Arguments></Exec></Actions></Task>"
+            inv.add(name, {"xml": xml, "enabled": True})
+        findings = recovery_tasks(inv)
+        self.assertEqual(["adjust"], [f["task"] for f in findings])
+        self.assertIn("实际影响需对比", findings[0]["reason"])
+
+    def test_shadow_loss_requires_observation_and_tracks_quota_direction(self):
+        db = database(":memory:")
+        self.addCleanup(db.close)
+        assoc = "storage\\source\\dest"
+        def observe(maximum, copy_ids=(), gaps=()):
+            inv = Inventory()
+            inv.add(assoc, {"maxBytes": str(maximum)})
+            for key in copy_ids:
+                inv.add("copies\\" + key, {"volume": "source"})
+            for prefix in gaps:
+                inv.fail(prefix, "denied")
+            return shadow_changes(update_scope(db, "shadows", inv))
+        self.assertEqual([], observe(8000, ("first",)))
+        self.assertEqual([], observe(8000, gaps=("copies",)))
+        events = observe(4000)
+        self.assertEqual({"卷影存储额度数值下降", "卷影副本不再可见"}, {e["title"] for e in events})
+        self.assertTrue(all(e["review"] for e in events))
+        self.assertEqual("8000", next(e for e in events if e["key"] == assoc)["before"]["maxBytes"])
+        events = observe(9000, ("new",))
+        self.assertFalse(any(e["review"] for e in events))

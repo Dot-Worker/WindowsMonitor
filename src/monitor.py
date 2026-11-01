@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from inventory import Inventory, collect_settings, file_tree, machine, services, shortcut_findings
-from protections import browser_changes, defense_events, defense_state, recovery_tasks
+from protections import browser_changes, defense_events, defense_state, recovery_tasks, shadow_changes
 
 
 FROZEN = getattr(sys, "frozen", False)
@@ -326,7 +326,8 @@ def report_html(report):
         cards("Defender 当前配置", list(security["state"].items())) if security else "",
         cards("阻止、审计与威胁处置事件", [(e["title"] + " · " + e["time"], e) for e in security["events"]]) if security else "",
         cards("浏览器扩展与启动配置变化", [(e["title"] + " · " + e["key"], e) for e in security["browserChanges"]]) if security else "",
-        cards("含删除备份或关闭恢复命令的计划任务", [(e["task"], e) for e in security["recoveryTasks"]]) if security else "",
+        cards("可能影响系统恢复的计划任务", [(e["task"], e) for e in security["recoveryTasks"]]) if security else "",
+        cards("卷影存储与副本的观测变化", [(e["title"] + " · " + e["key"], e) for e in security.get("shadowChanges", [])]) if security else "",
         (f"<p>{proc['hosts']} 个系统进程 · {proc['modules']} 条加载记录 · {proc['files']} 个磁盘映像。"
          "下列记录是待核对线索，JIT、热补丁和第三方扩展也会产生记录。</p>" if proc else ""),
         cards("系统进程内待核对的模块", [(x["class"] + " · " + x["path"], x) for x in proc.get("moduleFindings", [])]) if proc else "",
@@ -407,7 +408,8 @@ def scan(args, job):
                     report["processes"] = process_evidence(collection, ref)
                 if job == "settings":
                     report["security"] = {"state": defense_state(collection["defender"]), "events": defense_events(event_logs),
-                                          "browserChanges": browser_changes(changes), "recoveryTasks": recovery_tasks(collection["tasks"])}
+                                          "browserChanges": browser_changes(changes), "recoveryTasks": recovery_tasks(collection["tasks"]),
+                                          "shadowChanges": shadow_changes(changes)}
                 # Journal differences and gaps. Current full inventory is in items.
                 journal = {k: v for k, v in report.items() if k != "services"}
                 db.execute("INSERT INTO runs(job,stamp,version,report) VALUES(?,?,?,?)",

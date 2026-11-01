@@ -60,7 +60,11 @@ namespace WindowsMonitor {
                     new Map {{"项目",state.Key},{"观测值",v},{"来源","Microsoft Defender 状态和首选项"}}));
             }
             foreach (var t in Rows(sec, "recoveryTasks"))
-                all.Add(new Finding(Grade.Review, "计划任务", Text(t,"task"), "任务配置中有删除备份或关闭恢复的命令", t));
+                all.Add(new Finding(Grade.Review, "计划任务", Text(t,"task"), Text(t,"reason").Length>0 ?
+                    Text(t,"reason") : "任务配置中有删除备份或关闭恢复的命令", t));
+            foreach (var v in Rows(sec,"shadowChanges"))
+                all.Add(new Finding(Object.Equals(Get(v,"review"),true) ? Grade.Review : Grade.Info,
+                    "卷影恢复", Text(v,"key"), Text(v,"title"), v));
             foreach (var b in Rows(sec,"browserChanges"))
                 all.Add(new Finding(Grade.Review, "浏览器扩展", Text(b,"key"), Text(b,"title"), b));
             foreach (var s in Rows(r,"shortcuts")) {
@@ -85,6 +89,7 @@ namespace WindowsMonitor {
                 all.Add(new Finding(Grade.Review, "原版清单", Text(d,"key"), Text(d,"kind"), d));
             foreach (var c in Rows(r,"changes")) {
                 string scope = Text(c,"scope"), kind = Text(c,"kind");
+                if (scope=="shadows") continue;
                 bool persistence = scope == "services" || scope == "tasks" || scope.StartsWith("autorun/") || scope == "defender";
                 all.Add(new Finding(persistence && (kind == "修改" || kind == "新增" || kind == "删除") ? Grade.Review : Grade.Info,
                     "观测变化", Text(c,"key"), scope + " · " + kind, c));
