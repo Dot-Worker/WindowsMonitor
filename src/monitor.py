@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from inventory import Inventory, collect_settings, covered, file_tree, machine, services, shortcut_findings
-from protections import browser_changes, defense_events, defense_state, recovery_tasks, shadow_changes, task_cache_audit
+from protections import browser_changes, defense_events, defense_state, defender_exclusions, recovery_tasks, shadow_changes, task_cache_audit
 
 
 FROZEN = getattr(sys, "frozen", False)
@@ -311,6 +311,10 @@ def report_html(report):
         f"<h1>WindowsMonitor 本机报告</h1><p>{esc(report['time'])} · {esc(report['job'])} · {esc(report['version']['CurrentBuild'])}.{esc(report['version']['UBR'])}</p>",
         f"<p>{esc(report['baselineNote'])}。{esc(ref['status'])}。</p>",
         cards("Defender 当前配置", list(security["state"].items())) if security else "",
+        cards("Defender 排除范围及可见性", [(v["type"] + " · 可见 " + str(v["visible"]) + " 项", v)
+                                         for v in security["exclusions"]["categories"]]) if security and "exclusions" in security else "",
+        cards("Defender 可见排除声明", [(v["type"] + " · " + v["value"], v)
+                                    for v in security["exclusions"]["entries"]]) if security and "exclusions" in security else "",
         cards("阻止、审计与威胁处置事件", [(e["title"] + " · " + e["time"], e) for e in security["events"]]) if security else "",
         cards("浏览器扩展与启动配置变化", [(e["title"] + " · " + e["key"], e) for e in security["browserChanges"]]) if security else "",
         cards("登记了强制安装的浏览器扩展", [(p["browser"] + " · " + p["id"], p)
@@ -356,6 +360,7 @@ def scan(args, job):
                 cursors = {k[6:]: int(v) for k, v in reader.execute("SELECT name,value FROM metadata WHERE name LIKE 'event/%'")}
             reader.close()
             collection = collect_settings(args.registry, args.shortcuts, cursors, args.uefi)
+            exclusions = defender_exclusions(collection["defender"])
         ref = compare_reference(args.reference, version, collection)
         db = database(state / "monitor.sqlite")
         try:
@@ -400,6 +405,7 @@ def scan(args, job):
                     report["processes"] = process_evidence(collection, ref)
                 if job == "settings":
                     report["security"] = {"state": defense_state(collection["defender"]), "events": defense_events(event_logs),
+                                          "exclusions": exclusions,
                                           "browserChanges": browser_changes(changes), "recoveryTasks": recovery_tasks(collection["tasks"]),
                                           "shadowChanges": shadow_changes(changes),
                                           "taskCache": task_cache_audit(collection["settings/HKLM"], collection["tasks"], changes),

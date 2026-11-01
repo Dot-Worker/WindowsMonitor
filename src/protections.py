@@ -163,3 +163,44 @@ def defense_state(inv):
         raw = inv.rows.get(name.casefold(), (None, None))[1]
         settings[label] = "未知" if raw is None else modes.get(raw, str(raw))
     return settings
+
+
+def defender_exclusions(inv):
+    """Report visible positives and protect the prior baseline when lists become opaque."""
+    categories, entries = [], []
+    limited = inv.errors.get("exclusionvisibility") or inv.errors.get("")
+    hidden = inv.rows.get(r"preference\hideexclusionsfromlocaladmins", (None, None))[1]
+    if hidden in (True, 1, "1"):
+        limited = "提供程序报告本机管理员的排除列表已隐藏"
+    for field, label in (("ExclusionPath", "路径"), ("ExclusionExtension", "扩展名"),
+                         ("ExclusionProcess", "进程"), ("ExclusionIpAddress", "IP 地址")):
+        key = ("preference\\" + field).casefold()
+        raw = inv.rows.get(key, (None, None))[1]
+        values = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
+        visible = []
+        partial = False
+        for item in values:
+            if not isinstance(item, str) or not item.strip() or re.match(r"^N/A(?:\s*:|$)", item.strip(), re.I):
+                partial = True
+            else:
+                visible.append(item)
+        reason = limited or inv.errors.get(key)
+        if reason:
+            visible = []
+        if not reason and (not visible or partial):
+            reason = "提供程序未返回完整可辨识的条目，无法区分空列表和可见性限制"
+        if reason:
+            inv.fail(key, reason)
+            inv.rows.pop(key, None)
+        categories.append({"type": label, "visible": len(visible), "visibility": reason or "本轮返回可见条目"})
+        for item in visible:
+            value = item.strip().replace("/", "\\").casefold()
+            review, why = False, "Defender 本轮返回的排除声明"
+            if field == "ExclusionPath" and re.fullmatch(r"(?:[a-z]:|%systemdrive%)(?:\\(?:\*|\*\.\*)?)?", value):
+                review, why = True, "驱动器或根路径排除声明，覆盖范围很大"
+            elif field == "ExclusionExtension" and value.removeprefix(".") in {"exe", "dll", "msi", "ps1", "bat", "cmd", "js", "vbs", "scr"}:
+                review, why = True, "可执行文件或脚本类型的排除声明"
+            elif field == "ExclusionProcess" and ntpath.basename(value) in {"powershell.exe", "pwsh.exe", "cmd.exe", "mshta.exe", "cscript.exe", "wscript.exe"}:
+                review, why = True, "通用命令或脚本宿主排除，可影响其打开文件的实时检查"
+            entries.append({"type": label, "value": item, "review": review, "reason": why})
+    return {"categories": categories, "entries": entries}

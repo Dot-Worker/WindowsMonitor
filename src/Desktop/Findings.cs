@@ -59,6 +59,12 @@ namespace WindowsMonitor {
                 all.Add(new Finding(g, "防护配置", state.Key, "当前配置：" + v,
                     new Map {{"项目",state.Key},{"观测值",v},{"来源","Microsoft Defender 状态和首选项"}}));
             }
+            foreach (var v in Rows(Child(sec,"exclusions"),"entries"))
+                all.Add(new Finding(Object.Equals(Get(v,"review"),true) ? Grade.Review : Grade.Info, "扫描排除",
+                    Text(v,"type")+" · "+Text(v,"value"), Text(v,"reason"), v));
+            foreach (var v in Rows(Child(sec,"exclusions"),"categories"))
+                if (Text(v,"visibility") != "本轮返回可见条目")
+                    all.Add(new Finding(Grade.Gap, "排除项可见性", Text(v,"type"), Text(v,"visibility"), v));
             foreach (var t in Rows(sec, "recoveryTasks"))
                 all.Add(new Finding(Grade.Review, "计划任务", Text(t,"task"), Text(t,"reason").Length>0 ?
                     Text(t,"reason") : "任务配置中有删除备份或关闭恢复的命令", t));

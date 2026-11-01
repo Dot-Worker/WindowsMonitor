@@ -99,6 +99,8 @@ HTML 和 JSON 总是展示最近一轮。SQLite 数据库保存完整的当前�
 
 任务缓存检查交叉比对可读的本机 TaskCache\Tree 注册表键和任务计划 API。具有 Id 的任务键缺少 SD 安全描述符时，界面会显示完整注册表路径、任务名和本轮 API 可见性。上次可读记录含 SD、本次缺失且 API 未列出的项目优先显示为高风险。普通任务文件夹、单纯的计数差异不会触发此规则。权限、任务更新和扫描时点都会影响可见性；缓存已清除或首次扫描前发生的操作可能无法追溯。[微软 Tarrask 案例](https://www.microsoft.com/en-us/security/blog/2022/04/12/tarrask-malware-uses-scheduled-tasks-for-defense-evasion/)
 
+Defender 的可见排除项按路径、文件扩展名、进程和 IP 地址分类。驱动器根路径、常见可执行类型和通用脚本宿主的排除声明会标为“需核查”。进程排除可影响该进程打开文件的实时检查。低权限、显式隐藏、空值和占位符会标为读取缺口，并保留上次可读基线；不能仅凭空返回确认最后一项已被删除。[微软排除项指南](https://learn.microsoft.com/en-us/defender-endpoint/common-exclusion-mistakes-microsoft-defender-antivirus) · [可见性策略](https://learn.microsoft.com/en-us/windows/client-management/mdm/defender-csp)
+
 ## 系统进程内的第三方代码
 
 进程报告检查 Windows 目录内的可执行文件、常见系统进程名称以及部分 Windows 应用包进程。可以用 --process 额外指定进程名。每个宿主的标识包含名称、PID 和创建时间，避免 PID 重用时把两个进程混在一起。

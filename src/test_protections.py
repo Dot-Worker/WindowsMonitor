@@ -7,10 +7,47 @@ from unittest.mock import patch
 from browser_inventory import browser_inventory, browser_policies
 from inventory import Inventory, TASK_CACHE_TREE
 from monitor import database, update_scope
-from protections import browser_changes, defense_events, defense_state, DEFENDER, recovery_tasks, shadow_changes, task_cache_audit
+from protections import browser_changes, defense_events, defense_state, defender_exclusions, DEFENDER, recovery_tasks, shadow_changes, task_cache_audit
 
 
 class ProtectionTests(unittest.TestCase):
+    def test_exclusion_scope_and_visibility_loss(self):
+        db = database(":memory:")
+        self.addCleanup(db.close)
+        inv = Inventory()
+        key = r"preference\ExclusionPath"
+        inv.add(key, ["C:\\", r"C:\Data\backup.tmp"])
+        inv.add(r"preference\ExclusionExtension", [".exe", "log"])
+        inv.add(r"preference\ExclusionProcess", [r"C:\Windows\System32\cmd.exe", "cmd.exe.bak"])
+        report = defender_exclusions(inv)
+        flagged = {e["value"] for e in report["entries"] if e["review"]}
+        self.assertEqual({"C:\\", ".exe", r"C:\Windows\System32\cmd.exe"}, flagged)
+        update_scope(db, "defender", inv)
+        for value, reason in ((None, None), ([], None), (["N/A: must be administrator"], None),
+                              (["secret"], "non-elevated")):
+            unreadable = Inventory()
+            unreadable.add(key, value)
+            if reason:
+                unreadable.fail("exclusionVisibility", reason)
+            result = defender_exclusions(unreadable)
+            self.assertEqual([],result["entries"])
+            self.assertIn(key.casefold(), unreadable.errors)
+            self.assertEqual([], update_scope(db, "defender", unreadable))
+        recovered = Inventory()
+        recovered.add(key, [r"C:\Data\backup.tmp"])
+        defender_exclusions(recovered)
+        changed = update_scope(db, "defender", recovered)
+        self.assertEqual(["C:\\", r"C:\Data\backup.tmp"],changed[0]["before"])
+        self.assertEqual("重新可读，存在差异",changed[0]["kind"])
+
+    def test_hidden_policy_and_missing_preference_are_not_clean_results(self):
+        inv = Inventory()
+        inv.add(r"preference\HideExclusionsFromLocalAdmins", True)
+        inv.add(r"preference\ExclusionPath", ["C:\\"])
+        result = defender_exclusions(inv)
+        self.assertFalse(result["entries"])
+        self.assertTrue(all(c["visible"]==0 and "隐藏" in c["visibility"] for c in result["categories"]))
+
     def test_missing_task_descriptor_needs_independent_evidence(self):
         reg, api = Inventory(), Inventory()
         reg.add(TASK_CACHE_TREE, {})
