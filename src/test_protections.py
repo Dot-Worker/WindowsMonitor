@@ -5,12 +5,39 @@ import unittest
 from unittest.mock import patch
 
 from browser_inventory import browser_inventory, browser_policies
-from inventory import Inventory
+from inventory import Inventory, TASK_CACHE_TREE
 from monitor import database, update_scope
-from protections import browser_changes, defense_events, defense_state, DEFENDER, recovery_tasks, shadow_changes
+from protections import browser_changes, defense_events, defense_state, DEFENDER, recovery_tasks, shadow_changes, task_cache_audit
 
 
 class ProtectionTests(unittest.TestCase):
+    def test_missing_task_descriptor_needs_independent_evidence(self):
+        reg, api = Inventory(), Inventory()
+        reg.add(TASK_CACHE_TREE, {})
+        reg.add(TASK_CACHE_TREE + r"\Vendor", {})  # A folder without SD is not a task.
+        path = TASK_CACHE_TREE + r"\Vendor\Maintenance"
+        reg.add(path, {"Id": [1, "fixture"], "sD": [3, {}]})
+        reg.add(TASK_CACHE_TREE + r"Backup\Other", {"Id": [1, "unrelated"]})
+        self.assertEqual([], task_cache_audit(reg, api, [])["findings"])
+        db = database(":memory:")
+        self.addCleanup(db.close)
+        update_scope(db, "settings/HKLM", reg)
+        reg.add(path, {"iD": [1, "fixture"]})
+        changes = update_scope(db, "settings/HKLM", reg)
+        result = task_cache_audit(reg, api, changes)
+        self.assertTrue(result["rootObserved"])
+        self.assertEqual(1, result["checked"])
+        self.assertTrue(result["findings"][0]["highPriority"])
+        self.assertFalse(task_cache_audit(reg, api, [])["findings"][0]["highPriority"])
+        api.fail(r"\Vendor", "denied")
+        f = task_cache_audit(reg, api, changes)["findings"][0]
+        self.assertIn("缺口", f["apiVisibility"])
+        self.assertFalse(f["highPriority"])
+        api.add(r"\VENDOR\maintenance", {"enabled": True})
+        self.assertEqual("本轮 API 已列出", task_cache_audit(reg, api, changes)["findings"][0]["apiVisibility"])
+        reg.fail(path, "denied")
+        self.assertEqual([], task_cache_audit(reg, api, changes)["findings"])
+
     def test_force_policy_inventory_and_changes(self):
         db = database(":memory:")
         self.addCleanup(db.close)

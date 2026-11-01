@@ -12,8 +12,8 @@ import sys
 import tempfile
 import time
 
-from inventory import Inventory, collect_settings, file_tree, machine, services, shortcut_findings
-from protections import browser_changes, defense_events, defense_state, recovery_tasks, shadow_changes
+from inventory import Inventory, collect_settings, covered, file_tree, machine, services, shortcut_findings
+from protections import browser_changes, defense_events, defense_state, recovery_tasks, shadow_changes, task_cache_audit
 
 
 FROZEN = getattr(sys, "frozen", False)
@@ -70,20 +70,6 @@ def database(path):
         CREATE TABLE IF NOT EXISTS runs(id INTEGER PRIMARY KEY, job TEXT, stamp TEXT, version TEXT, report TEXT);
     """)
     return db
-
-
-def covered(key, gaps):
-    key = key.casefold().rstrip("\\")
-    if "" in gaps or "\\" in gaps:
-        return False
-    while True:
-        if key in gaps:
-            return False
-        if "\\" not in key:
-            return True
-        key = key.rsplit("\\", 1)[0]
-        if key + "\\" in gaps:
-            return False
 
 
 def change(scope, label, kind, previous=None, current=None):
@@ -315,6 +301,7 @@ def report_html(report):
     ref = report["reference"]
     proc = report.get("processes", {})
     security = report.get("security")
+    audit = (security or {}).get("taskCache")
     return "".join([
         '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
         '<title>WindowsMonitor 本机报告</title><style>body{max-width:1050px;margin:2em auto;padding:0 1em;background:#f4f6f8;color:#182d40;'
@@ -329,6 +316,9 @@ def report_html(report):
         cards("登记了强制安装的浏览器扩展", [(p["browser"] + " · " + p["id"], p)
                                       for p in security.get("browserPolicies", [])]) if security else "",
         cards("可能影响系统恢复的计划任务", [(e["task"], e) for e in security["recoveryTasks"]]) if security else "",
+        (f"<p>计划任务缓存根键{'可读' if audit['rootObserved'] else '未观察到'} · 可核对缓存任务 {audit['checked']} 个 · "
+         f"任务计划 API 本轮列出 {audit['apiCount']} 个</p>" +
+         cards("缺少安全描述符的任务缓存", [(t["task"], t) for t in audit["findings"]])) if audit else "",
         cards("卷影存储与副本的观测变化", [(e["title"] + " · " + e["key"], e) for e in security.get("shadowChanges", [])]) if security else "",
         (f"<p>{proc['hosts']} 个系统进程 · {proc['modules']} 条加载记录 · {proc['files']} 个磁盘映像。"
          "下列记录是待核对线索，JIT、热补丁和第三方扩展也会产生记录。</p>" if proc else ""),
@@ -412,6 +402,7 @@ def scan(args, job):
                     report["security"] = {"state": defense_state(collection["defender"]), "events": defense_events(event_logs),
                                           "browserChanges": browser_changes(changes), "recoveryTasks": recovery_tasks(collection["tasks"]),
                                           "shadowChanges": shadow_changes(changes),
+                                          "taskCache": task_cache_audit(collection["settings/HKLM"], collection["tasks"], changes),
                                           "browserPolicies": [{"key": key, **value} for key, value in collection["browser-policy"].rows.values()]}
                 # Journal differences and gaps. Current full inventory is in items.
                 journal = {k: v for k, v in report.items() if k != "services"}

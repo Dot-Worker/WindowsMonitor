@@ -66,6 +66,7 @@ function CloseClient {
     if ($launcher) { $null = Until {$launcher.HasExited} }
 }
 $report = @{time='2026-01-01T00:00:00Z'; shortcuts=@(); changes=@(); security=@{
+    taskCache=@{findings=@(@{task='\Fixture\Maintenance';descriptor='Id present, SD absent';apiVisibility='not observed';highPriority=$true})};
     browserPolicies=@(@{browser='Chrome';id=('b'*32);policy='ExtensionInstallForcelist';key='fixture'});
     state=@{'模式'='关闭'}; events=@(@{id=1116;title='Desktop test detection';time='00:00'},@{id=1124;title='Audit only';time='00:01'})};
     coverage=@{fixture=@{errors=@{probe='test only'}}}}
@@ -73,8 +74,8 @@ SaveFixture 'settings.json' $report
 $mock = $null
 try {
     LaunchClient
-    Click '高风险   1'
-    $null = Until {Element '全部项目   /   1 项'}
+    Click '高风险   2'
+    $null = Until {Element '全部项目   /   2 项'}
     $null = Until {Element 'Desktop test detection'}
     Click '浏览器'
     $null = Until {Element '浏览器   /   1 项'}

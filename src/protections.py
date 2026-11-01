@@ -2,6 +2,7 @@
 import ntpath
 import re
 from xml.etree import ElementTree as ET
+from inventory import TASK_CACHE_TREE, covered
 
 
 DEFENDER = "Microsoft-Windows-Windows Defender/Operational"
@@ -38,6 +39,36 @@ def recovery_tasks(inv):
                     reason = "任务配置了卷影存储额度调整，实际影响需对比额度和副本"
                 findings.append({"task": key, "enabled": data["enabled"], "command": command, "arguments": arguments, "reason": reason})
     return findings
+
+
+def task_cache_audit(registry, tasks, changes):
+    root = TASK_CACHE_TREE.casefold()
+    formerly_had_sd = {c["key"].casefold() for c in changes if c["scope"] == "settings/HKLM"
+                       and c["kind"] in ("修改", "重新可读，存在差异") and c["key"].casefold().startswith(root + "\\")
+                       and any(name.casefold() == "sd" for name in c.get("before", {}))}
+    result = {"rootObserved": root in registry.rows and covered(root, registry.errors),
+              "apiCount": len(tasks.rows), "checked": 0, "findings": []}
+    for key, (path, values) in registry.rows.items():
+        if not key.startswith(root + "\\") or not covered(key, registry.errors):
+            continue
+        names = {n.casefold() for n in values}
+        if "id" not in names:
+            continue  # Folder keys are not registered task definitions.
+        result["checked"] += 1
+        if "sd" in names:
+            continue
+        name = path[len(TASK_CACHE_TREE):]
+        if name.casefold() in tasks.rows:
+            visibility = "本轮 API 已列出"
+        elif covered(name, tasks.errors):
+            visibility = "本轮 API 未列出"
+        else:
+            visibility = "API 枚举存在读取缺口"
+        lost = key in formerly_had_sd
+        result["findings"].append({"task": name, "registryKey": path, "descriptor": "Id 存在，SD 值缺失",
+                                   "apiVisibility": visibility, "previouslyHadSD": lost,
+                                   "highPriority": lost and visibility == "本轮 API 未列出"})
+    return result
 
 
 def shadow_changes(changes):

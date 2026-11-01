@@ -31,6 +31,20 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def covered(key, gaps):
+    key = key.casefold().rstrip("\\")
+    if "" in gaps or "\\" in gaps:
+        return False
+    while True:
+        if key in gaps:
+            return False
+        if "\\" not in key:
+            return True
+        key = key.rsplit("\\", 1)[0]
+        if key + "\\" in gaps:
+            return False
+
+
 def machine():
     if os.name != "nt" or sys.maxsize <= 2**32:
         raise ValueError("请在 Windows 中使用 64 位 Python 运行。")
@@ -109,11 +123,12 @@ USER_POLICIES = [r"Software\Policies", RUN + r"\Policies"]
 STARTUP = [RUN + "\\" + tail for tail in (
     "Run", "RunOnce", "RunOnceEx", "RunServices", "RunServicesOnce", r"Explorer\StartupApproved",
     r"Explorer\Shell Folders", r"Explorer\User Shell Folders", "Group Policy\\Scripts", "Policies\\Explorer\\Run")]
+TASK_CACHE_TREE = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree"
 MACHINE_SETTINGS = [r"SYSTEM\CurrentControlSet\Control\Session Manager", r"SYSTEM\CurrentControlSet\Control\Lsa",
                     r"SYSTEM\CurrentControlSet\Control\SecureBoot\State",
                     r"SYSTEM\CurrentControlSet\Control\Power", r"SYSTEM\CurrentControlSet\Control\TimeZoneInformation",
                     r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters", r"SOFTWARE\Microsoft\Windows Defender",
-                    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree"]
+                    TASK_CACHE_TREE]
 MACHINE_START = [r"Software\Microsoft\Windows NT\CurrentVersion" + "\\" + p for p in (
     "Winlogon", "Windows", "Image File Execution Options", "SilentProcessExit")]
 

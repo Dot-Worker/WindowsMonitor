@@ -62,6 +62,9 @@ namespace WindowsMonitor {
             foreach (var t in Rows(sec, "recoveryTasks"))
                 all.Add(new Finding(Grade.Review, "计划任务", Text(t,"task"), Text(t,"reason").Length>0 ?
                     Text(t,"reason") : "任务配置中有删除备份或关闭恢复的命令", t));
+            foreach (var t in Rows(Child(sec,"taskCache"),"findings"))
+                all.Add(new Finding(Object.Equals(Get(t,"highPriority"),true) ? Grade.High : Grade.Review,
+                    "任务缓存", Text(t,"task"), Text(t,"descriptor")+" · "+Text(t,"apiVisibility"), t));
             foreach (var v in Rows(sec,"shadowChanges"))
                 all.Add(new Finding(Object.Equals(Get(v,"review"),true) ? Grade.Review : Grade.Info,
                     "卷影恢复", Text(v,"key"), Text(v,"title"), v));
